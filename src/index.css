@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+@theme {
+  --color-sage-50: #f6f7f4;
+  --color-sage-100: #e8ebe3;
+  --color-sage-200: #d4d9cc;
+  --color-sage-300: #b5bda8;
+  --color-sage-400: #939e82;
+  --color-sage-500: #768264;
+  --color-sage-600: #5c674e;
+  --color-sage-700: #48523d;
+  --color-sage-800: #3c4434;
+  --color-sage-900: #343a2e;
+
+  --color-cream-50: #fdfcfa;
+  --color-cream-100: #f9f7f0;
+  --color-cream-200: #f3efe2;
+
+  --color-terra-50: #fdf5f0;
+  --color-terra-100: #f9e8db;
+  --color-terra-200: #f2d0b8;
+  --color-terra-300: #e8b08a;
+  --color-terra-400: #db8c5e;
+  --color-terra-500: #d07340;
+  --color-terra-600: #c25e35;
+
+  --color-ocean-50: #f0f7f6;
+  --color-ocean-100: #d9edea;
+  --color-ocean-200: #b7dbd6;
+  --color-ocean-300: #8bc4bc;
+  --color-ocean-400: #5ea8a0;
+  --color-ocean-500: #438e87;
+  --color-ocean-600: #32736d;
+
+  --color-gold-50: #fdf9f0;
+  --color-gold-100: #f9f0db;
+  --color-gold-200: #f2e0b8;
+  --color-gold-300: #e8cc8a;
+  --color-gold-400: #dbb55e;
+  --color-gold-500: #d4a843;
+
+  --font-sans: 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-cream-100);
+  color: var(--color-sage-800);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-sage-300);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-sage-400);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out forwards;
+}
+
+/* Glass morphism effect */
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Card hover lift */
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(60, 68, 52, 0.1);
+}
