@@ -10,6 +10,32 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import type { PantryItem, PantryUsage, PantryStatus, PantryCategory } from '../types';
 
+// 解析 usedQuantity JSON，返回"已使用XX"显示文本（按单位分组累加数字）
+function getUsedText(usedQuantity?: string): string {
+  if (!usedQuantity) return '';
+  try {
+    const records = JSON.parse(usedQuantity) as { r: string; q: string }[];
+    if (records.length === 0) return '';
+    const byUnit = new Map<string, number>();
+    for (const rec of records) {
+      const m = rec.q.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
+      if (m) {
+        const num = parseFloat(m[1]);
+        const unit = m[2] || '';
+        byUnit.set(unit, (byUnit.get(unit) || 0) + num);
+      } else {
+        byUnit.set(rec.q, -1);
+      }
+    }
+    const parts: string[] = [];
+    for (const [unit, num] of byUnit) {
+      if (num === -1) parts.push(unit);
+      else parts.push(`${num % 1 === 0 ? num : num.toFixed(1)}${unit}`);
+    }
+    return parts.length > 0 ? `已使用${parts.join('、')}` : '';
+  } catch { return ''; }
+}
+
 // 四象限配置
 const QUADRANTS: { id: PantryCategory; label: string; icon: typeof Beef }[] = [
   { id: 'meat_dairy', label: '肉类&乳制品', icon: Beef },
@@ -680,6 +706,9 @@ function SortablePantryItemCard({
           <span className={`text-sm ${isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
             {item.quantity}
           </span>
+          {getUsedText(item.usedQuantity) && (
+            <span className="text-xs text-sage-400 shrink-0">{getUsedText(item.usedQuantity)}</span>
+          )}
         </div>
         <button
           onPointerDown={e => e.stopPropagation()}
@@ -742,6 +771,9 @@ function PantryItemCard({
           <span className={`text-sm ${isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
             {item.quantity}
           </span>
+          {getUsedText(item.usedQuantity) && (
+            <span className="text-xs text-sage-400 shrink-0">{getUsedText(item.usedQuantity)}</span>
+          )}
         </div>
         <button
           onClick={() => onDelete(item.id)}

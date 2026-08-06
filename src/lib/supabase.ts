@@ -137,6 +137,7 @@ export async function getPantryItems(userId: string): Promise<PantryItem[]> {
     category: (row.category as PantryCategory) || 'other',
     createdAt: row.created_at,
     sortOrder: row.sort_order ?? 0,
+    usedQuantity: row.used_quantity || '',
   }));
 }
 
@@ -168,6 +169,7 @@ export async function addPantryItem(item: Omit<PantryItem, 'id' | 'createdAt'>):
     category: (data.category as PantryCategory) || 'other',
     createdAt: data.created_at,
     sortOrder: data.sort_order ?? 0,
+    usedQuantity: data.used_quantity || '',
   };
 }
 
@@ -178,6 +180,7 @@ export async function updatePantryItem(id: string, updates: Partial<PantryItem>)
   if (updates.status !== undefined) dbUpdates.status = updates.status;
   if (updates.sortOrder !== undefined) dbUpdates.sort_order = updates.sortOrder;
   if (updates.category !== undefined) dbUpdates.category = updates.category;
+  if (updates.usedQuantity !== undefined) dbUpdates.used_quantity = updates.usedQuantity;
 
   const { error } = await supabase
     .from('pantry_items')

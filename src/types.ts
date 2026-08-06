@@ -80,6 +80,13 @@ export interface PantryItem {
   createdAt: string;
   sortOrder?: number;
   isVirtual?: boolean;
+  usedQuantity?: string; // JSON数组，记录历史消耗 [{"r":"清炒苦瓜","q":"100g"}]
+}
+
+// 单条消耗记录
+export interface ConsumptionRecord {
+  r: string; // 菜谱名
+  q: string; // 用量
 }
 
 export interface Recipe {

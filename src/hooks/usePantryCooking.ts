@@ -6,7 +6,7 @@ import {
   getRecipes, addRecipe, updateRecipe, updateRecipeActive, deleteRecipe,
   getRecipeItems, addRecipeItem, updateRecipeItem, deleteRecipeItem,
 } from '../lib/supabase';
-import type { PantryItem, Recipe, RecipeItem, PantryUsage, RecipeItemWithMatch, PantryStatus, PantryCategory } from '../types';
+import type { PantryItem, Recipe, RecipeItem, PantryUsage, RecipeItemWithMatch, PantryStatus, PantryCategory, ConsumptionRecord } from '../types';
 
 const DEMO_PANTRY_KEY = 'diet_tracker_demo_pantry';
 const DEMO_RECIPES_KEY = 'diet_tracker_demo_recipes';
@@ -40,6 +40,35 @@ function saveDemoRecipeItems(items: RecipeItem[]) {
 
 function genId() {
   return `demo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// 解析 usedQuantity JSON 字符串为消耗记录数组
+function parseUsedQuantity(s?: string): ConsumptionRecord[] {
+  if (!s) return [];
+  try { return JSON.parse(s) as ConsumptionRecord[]; } catch { return []; }
+}
+
+// 从消耗记录计算累计已使用量（按单位分组累加数字）
+// 如 [{q:"100g"},{q:"80g"}] → "180g"；[{q:"100g"},{q:"2根"}] → "100g、2根"
+function getTotalUsedQuantity(records: ConsumptionRecord[]): string {
+  if (records.length === 0) return '';
+  const byUnit = new Map<string, number>();
+  for (const r of records) {
+    const m = r.q.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
+    if (m) {
+      const num = parseFloat(m[1]);
+      const unit = m[2] || '';
+      byUnit.set(unit, (byUnit.get(unit) || 0) + num);
+    } else {
+      byUnit.set(r.q, -1);
+    }
+  }
+  const parts: string[] = [];
+  for (const [unit, num] of byUnit) {
+    if (num === -1) parts.push(unit);
+    else parts.push(`${num % 1 === 0 ? num : num.toFixed(1)}${unit}`);
+  }
+  return parts.join('、');
 }
 
 // ===== 主 Hook =====
@@ -270,11 +299,42 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     setRecipes(prev => prev.map(r => r.id === id ? { ...r, title } : r));
   }, [isDemo, configured]);
 
-  // 切换菜谱激活/关闭状态（关闭后不再提示买菜、不再占用食材）
+  // 切换菜谱激活/关闭状态
+  // 关闭(点完成)：把已匹配食材的消耗固化为历史记录 → 关闭菜谱
+  // 打开(点再做)：重新激活，不撤销已使用量（历史事实不回退）
   const toggleRecipeActive = useCallback(async (id: string) => {
     const recipe = recipes.find(r => r.id === id);
     if (!recipe) return;
-    const newActive = recipe.active === false; // 已关闭→打开，激活中→关闭
+    const newActive = recipe.active === false;
+
+    // 点「完成」时（从激活→关闭），固化已匹配食材的消耗
+    if (!newActive) {
+      const activePantryByName = new Map<string, PantryItem>();
+      for (const p of pantryItems) {
+        if (p.status === 'active' && !activePantryByName.has(p.name)) {
+          activePantryByName.set(p.name, p);
+        }
+      }
+      const itemsOfRecipe = recipeItems.filter(ri => ri.recipeId === id);
+      // 按 pantryItemId 分组，避免同一食材被多条 recipe_item 引用时覆盖
+      const consumptionsByPantry = new Map<string, ConsumptionRecord[]>();
+      for (const ri of itemsOfRecipe) {
+        const matched = activePantryByName.get(ri.name);
+        if (!matched || matched.id.startsWith('virtual-')) continue;
+        const list = consumptionsByPantry.get(matched.id) || [];
+        list.push({ r: recipe.title, q: ri.quantity });
+        consumptionsByPantry.set(matched.id, list);
+      }
+      for (const [pantryId, newRecords] of consumptionsByPantry) {
+        const item = pantryItems.find(p => p.id === pantryId);
+        if (!item) continue;
+        const existing = parseUsedQuantity(item.usedQuantity);
+        existing.push(...newRecords);
+        await editPantryItem(pantryId, { usedQuantity: JSON.stringify(existing) });
+      }
+    }
+
+    // 切换菜谱状态
     if (isDemo || !configured) {
       const updated = getDemoRecipes().map(r => r.id === id ? { ...r, active: newActive } : r);
       saveDemoRecipes(updated);
@@ -283,7 +343,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     }
     await updateRecipeActive(id, newActive);
     setRecipes(prev => prev.map(r => r.id === id ? { ...r, active: newActive } : r));
-  }, [recipes, isDemo, configured]);
+  }, [recipes, pantryItems, recipeItems, editPantryItem, isDemo, configured]);
 
   const removeRecipe = useCallback(async (id: string) => {
     if (isDemo || !configured) {
