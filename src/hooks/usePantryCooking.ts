@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { arrayMove } from '@dnd-kit/sortable';
 import {
   getPantryItems, addPantryItem, updatePantryItem, deletePantryItem,
+  updatePantrySortOrders,
   getRecipes, addRecipe, updateRecipe, deleteRecipe,
   getRecipeItems, addRecipeItem, updateRecipeItem, deleteRecipeItem,
 } from '../lib/supabase';
@@ -118,15 +120,18 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
   const createPantryItem = useCallback(async (name: string, quantity: string, status: PantryStatus) => {
     if (!userId) return;
     if (isDemo || !configured) {
-      const item: PantryItem = { id: genId(), userId, name, quantity, status, createdAt: new Date().toISOString() };
-      const updated = [...getDemoPantry(), item];
+      const existing = getDemoPantry();
+      const maxOrder = Math.max(0, ...existing.filter(p => p.status === 'active').map(p => p.sortOrder ?? 0));
+      const item: PantryItem = { id: genId(), userId, name, quantity, status, createdAt: new Date().toISOString(), sortOrder: status === 'active' ? maxOrder + 1 : 0 };
+      const updated = [...existing, item];
       saveDemoPantry(updated);
       setPantryItems(updated);
       return;
     }
-    const result = await addPantryItem({ userId, name, quantity, status });
+    const maxOrder = Math.max(0, ...pantryItems.filter(p => p.status === 'active').map(p => p.sortOrder ?? 0));
+    const result = await addPantryItem({ userId, name, quantity, status, sortOrder: status === 'active' ? maxOrder + 1 : 0 });
     if (result) setPantryItems(prev => [...prev, result]);
-  }, [userId, isDemo, configured]);
+  }, [userId, isDemo, configured, pantryItems]);
 
   const editPantryItem = useCallback(async (id: string, updates: Partial<PantryItem>) => {
     if (isDemo || !configured) {
@@ -170,6 +175,28 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     }
     await editPantryItem(id, { status: 'active', quantity });
   }, [virtualToBuyItems, userId, createPantryItem, editPantryItem]);
+
+  // 拖拽排序：重新排列现有食材
+  const reorderPantryItems = useCallback(async (activeList: PantryItem[], oldIndex: number, newIndex: number) => {
+    const reordered = arrayMove(activeList, oldIndex, newIndex);
+    const updates = reordered.map((item, idx) => ({ id: item.id, sortOrder: idx }));
+    const orderMap = new Map(updates.map(u => [u.id, u.sortOrder]));
+
+    // 乐观更新内存
+    setPantryItems(prev => prev.map(p =>
+      orderMap.has(p.id) ? { ...p, sortOrder: orderMap.get(p.id) } : p
+    ));
+
+    if (isDemo || !configured) {
+      const all = getDemoPantry().map(p =>
+        orderMap.has(p.id) ? { ...p, sortOrder: orderMap.get(p.id) } : p
+      );
+      saveDemoPantry(all);
+      return;
+    }
+
+    await updatePantrySortOrders(updates);
+  }, [isDemo, configured]);
 
   // ===== 菜谱 CRUD =====
 
@@ -329,6 +356,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     removePantryItem,
     toggleChecked,
     convertToBuyToActive,
+    reorderPantryItems,
     createRecipe,
     editRecipeTitle,
     removeRecipe,

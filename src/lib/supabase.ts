@@ -120,6 +120,7 @@ export async function getPantryItems(userId: string): Promise<PantryItem[]> {
     .from('pantry_items')
     .select('*')
     .eq('user_id', userId)
+    .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });
 
   if (error) {
@@ -134,6 +135,7 @@ export async function getPantryItems(userId: string): Promise<PantryItem[]> {
     quantity: row.quantity,
     status: row.status,
     createdAt: row.created_at,
+    sortOrder: row.sort_order ?? 0,
   }));
 }
 
@@ -145,6 +147,7 @@ export async function addPantryItem(item: Omit<PantryItem, 'id' | 'createdAt'>):
       name: item.name,
       quantity: item.quantity,
       status: item.status,
+      sort_order: item.sortOrder ?? 0,
     })
     .select()
     .single();
@@ -161,6 +164,7 @@ export async function addPantryItem(item: Omit<PantryItem, 'id' | 'createdAt'>):
     quantity: data.quantity,
     status: data.status,
     createdAt: data.created_at,
+    sortOrder: data.sort_order ?? 0,
   };
 }
 
@@ -169,6 +173,7 @@ export async function updatePantryItem(id: string, updates: Partial<PantryItem>)
   if (updates.name !== undefined) dbUpdates.name = updates.name;
   if (updates.quantity !== undefined) dbUpdates.quantity = updates.quantity;
   if (updates.status !== undefined) dbUpdates.status = updates.status;
+  if (updates.sortOrder !== undefined) dbUpdates.sort_order = updates.sortOrder;
 
   const { error } = await supabase
     .from('pantry_items')
@@ -195,6 +200,16 @@ export async function deletePantryItem(id: string): Promise<boolean> {
   }
 
   return true;
+}
+
+// 批量更新食材排序
+export async function updatePantrySortOrders(updates: { id: string; sortOrder: number }[]): Promise<boolean> {
+  const results = await Promise.all(
+    updates.map(u =>
+      supabase.from('pantry_items').update({ sort_order: u.sortOrder }).eq('id', u.id)
+    )
+  );
+  return results.every(r => !r.error);
 }
 
 // ===== 菜谱 (recipes) CRUD =====

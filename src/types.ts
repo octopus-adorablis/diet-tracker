@@ -74,6 +74,7 @@ export interface PantryItem {
   quantity: string;
   status: PantryStatus;
   createdAt: string;
+  sortOrder?: number;
   isVirtual?: boolean;
 }
 

@@ -1,5 +1,13 @@
 import { useState } from 'react';
-import { Plus, Circle, CheckCircle, X, ChefHat, ShoppingCart, Trash2 } from 'lucide-react';
+import { Plus, Circle, CheckCircle, X, ChefHat, ShoppingCart, Trash2, GripVertical } from 'lucide-react';
+import {
+  DndContext, closestCenter, PointerSensor, useSensor, useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext, useSortable, verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import type { PantryItem, PantryUsage, PantryStatus } from '../types';
 
 interface PantryViewProps {
@@ -9,13 +17,14 @@ interface PantryViewProps {
   onToggleChecked: (id: string) => Promise<void>;
   onConvertToBuy: (id: string, quantity: string) => Promise<void>;
   onDeletePantryItem: (id: string) => Promise<void>;
+  onReorder: (activeList: PantryItem[], oldIndex: number, newIndex: number) => Promise<void>;
   onNavigateToRecipe: (recipeId: string) => void;
   onNavigateToCooking: () => void;
 }
 
 export default function PantryView({
   pantryItems, getPantryUsage, onCreatePantryItem, onToggleChecked, onConvertToBuy,
-  onDeletePantryItem, onNavigateToRecipe, onNavigateToCooking,
+  onDeletePantryItem, onReorder, onNavigateToRecipe, onNavigateToCooking,
 }: PantryViewProps) {
   const [newName, setNewName] = useState('');
   const [newQty, setNewQty] = useState('');
@@ -26,6 +35,22 @@ export default function PantryView({
   const activeItems = pantryItems.filter(p => p.status === 'active');
   const toBuyItems = pantryItems.filter(p => p.status === 'to_buy');
   const checkedItems = pantryItems.filter(p => p.status === 'checked');
+
+  // 长按 250ms 激活拖拽，兼容触摸和鼠标；快速点击不受影响
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { delay: 250, tolerance: 8 },
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = activeItems.findIndex(i => i.id === active.id);
+    const newIndex = activeItems.findIndex(i => i.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    onReorder(activeItems, oldIndex, newIndex);
+  };
 
   const handleAdd = async () => {
     if (!newName.trim()) return;
@@ -94,25 +119,33 @@ export default function PantryView({
         </button>
       </div>
 
-      {/* 现有食材 */}
+      {/* 现有食材（可拖拽排序） */}
       {activeItems.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-2 px-1">
             <span className="text-xs font-medium text-sage-500 tracking-wider">现有食材</span>
-            <span className="text-xs text-sage-400">{activeItems.length} 项</span>
+            <span className="text-xs text-sage-400">{activeItems.length} 项 · 长按拖动排序</span>
           </div>
-          <div className="space-y-2">
-            {activeItems.map(item => (
-              <PantryItemCard
-                key={item.id}
-                item={item}
-                usages={getPantryUsage(item.id)}
-                onToggleChecked={onToggleChecked}
-                onDelete={onDeletePantryItem}
-                onNavigateToRecipe={onNavigateToRecipe}
-              />
-            ))}
-          </div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext items={activeItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
+              <div className="space-y-2">
+                {activeItems.map(item => (
+                  <SortablePantryItemCard
+                    key={item.id}
+                    item={item}
+                    usages={getPantryUsage(item.id)}
+                    onToggleChecked={onToggleChecked}
+                    onDelete={onDeletePantryItem}
+                    onNavigateToRecipe={onNavigateToRecipe}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
         </div>
       )}
 
@@ -232,7 +265,88 @@ export default function PantryView({
   );
 }
 
-// ===== 现有食材卡片 =====
+// ===== 可拖拽的现有食材卡片 =====
+
+function SortablePantryItemCard({
+  item, usages, onToggleChecked, onDelete, onNavigateToRecipe,
+}: {
+  item: PantryItem;
+  usages: PantryUsage[];
+  onToggleChecked: (id: string) => void;
+  onDelete: (id: string) => void;
+  onNavigateToRecipe: (recipeId: string) => void;
+}) {
+  const {
+    attributes, listeners, setNodeRef, transform, transition, isDragging,
+  } = useSortable({ id: item.id });
+
+  const isChecked = item.status === 'checked';
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : undefined,
+    zIndex: isDragging ? 50 : 'auto' as const,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className={`bg-white rounded-xl border border-sage-100 p-3 touch-none ${isChecked ? 'opacity-50' : ''} ${isDragging ? 'shadow-lg border-grape-300' : ''}`}
+    >
+      <div className="flex items-center gap-3">
+        <button
+          onPointerDown={e => e.stopPropagation()}
+          onClick={() => onToggleChecked(item.id)}
+          className="shrink-0 text-sage-300 hover:text-sage-500 transition-colors"
+        >
+          {isChecked ? <CheckCircle size={20} className="text-sage-400" /> : <Circle size={20} />}
+        </button>
+        <GripVertical size={16} className="shrink-0 text-sage-200" />
+        <div className="flex items-baseline gap-2 flex-1 min-w-0">
+          <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
+            {item.name}
+          </span>
+          <span className={`text-sm ${isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
+            {item.quantity}
+          </span>
+        </div>
+        <button
+          onPointerDown={e => e.stopPropagation()}
+          onClick={() => onDelete(item.id)}
+          className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-sage-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+          title="删除"
+        >
+          <Trash2 size={15} />
+        </button>
+      </div>
+      {/* 使用标注 */}
+      {usages.length > 0 && (
+        <div className="ml-8 mt-1.5 space-y-1">
+          {usages.map((u, i) => (
+            <div key={i} className="flex items-center gap-1.5 text-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-sage-400 shrink-0" />
+              <span className="text-sage-600">已使用 {u.recipeItemQuantity}</span>
+              <span className="text-sage-400">→</span>
+              <button
+                onPointerDown={e => e.stopPropagation()}
+                onClick={() => onNavigateToRecipe(u.recipeId)}
+                className="text-grape-600 hover:text-grape-700 hover:underline transition-colors"
+              >
+                {u.recipeTitle}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== 普通食材卡片（已用完区，不可拖拽） =====
 
 function PantryItemCard({
   item, usages, onToggleChecked, onDelete, onNavigateToRecipe,
