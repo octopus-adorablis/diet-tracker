@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Circle, CheckCircle, X, ChefHat, ShoppingCart, Trash2, GripVertical } from 'lucide-react';
+import { Plus, Circle, CheckCircle, X, ChefHat, ShoppingCart, Trash2, GripVertical, ExternalLink } from 'lucide-react';
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
   type DragEndEvent,
@@ -20,11 +20,12 @@ interface PantryViewProps {
   onReorder: (activeList: PantryItem[], oldIndex: number, newIndex: number) => Promise<void>;
   onNavigateToRecipe: (recipeId: string) => void;
   onNavigateToCooking: () => void;
+  onOpenCookingInNewTab: () => void;
 }
 
 export default function PantryView({
   pantryItems, getPantryUsage, onCreatePantryItem, onToggleChecked, onConvertToBuy,
-  onDeletePantryItem, onReorder, onNavigateToRecipe, onNavigateToCooking,
+  onDeletePantryItem, onReorder, onNavigateToRecipe, onNavigateToCooking, onOpenCookingInNewTab,
 }: PantryViewProps) {
   const [newName, setNewName] = useState('');
   const [newQty, setNewQty] = useState('');
@@ -84,13 +85,22 @@ export default function PantryView({
             <p className="text-xs text-sage-500">管理现有食材 · 做菜自动匹配</p>
           </div>
         </div>
-        <button
-          onClick={onNavigateToCooking}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-grape-600 text-white text-sm font-medium hover:bg-grape-700 transition-colors shadow-sm"
-        >
-          <ChefHat size={16} />
-          做菜
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onNavigateToCooking}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-grape-600 text-white text-sm font-medium hover:bg-grape-700 transition-colors shadow-sm"
+          >
+            <ChefHat size={16} />
+            做菜
+          </button>
+          <button
+            onClick={onOpenCookingInNewTab}
+            className="w-9 h-9 rounded-xl bg-grape-100 text-grape-600 flex items-center justify-center hover:bg-grape-200 transition-colors"
+            title="做菜页面在新标签页打开"
+          >
+            <ExternalLink size={16} />
+          </button>
+        </div>
       </div>
 
       {/* 添加栏 */}

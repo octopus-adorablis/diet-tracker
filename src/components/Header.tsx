@@ -1,4 +1,4 @@
-import { Leaf, LogOut, User, CalendarDays, List, BarChart3, Plus, ChefHat } from 'lucide-react';
+import { Leaf, LogOut, User, CalendarDays, List, BarChart3, Plus, ChefHat, ExternalLink } from 'lucide-react';
 import type { ViewMode } from '../types';
 
 interface HeaderProps {
@@ -7,9 +7,10 @@ interface HeaderProps {
   currentView: ViewMode;
   onChangeView: (view: ViewMode) => void;
   onAddClick: () => void;
+  onOpenInNewTab: () => void;
 }
 
-export default function Header({ userEmail, onSignOut, currentView, onChangeView, onAddClick }: HeaderProps) {
+export default function Header({ userEmail, onSignOut, currentView, onChangeView, onAddClick, onOpenInNewTab }: HeaderProps) {
   const tabs: { id: ViewMode; label: string; icon: typeof CalendarDays }[] = [
     { id: 'calendar', label: '日历', icon: CalendarDays },
     { id: 'list', label: '列表', icon: List },
@@ -20,6 +21,7 @@ export default function Header({ userEmail, onSignOut, currentView, onChangeView
   // pantry 和 cooking 视图都高亮"食材库"标签
   const activeTab = currentView === 'cooking' ? 'pantry' : currentView;
   const showAddButton = currentView !== 'pantry' && currentView !== 'cooking';
+  const showNewTabButton = currentView === 'pantry' || currentView === 'cooking';
 
   return (
     <header className="sticky top-0 z-50 glass border-b border-sage-100">
@@ -59,6 +61,16 @@ export default function Header({ userEmail, onSignOut, currentView, onChangeView
 
           {/* Actions */}
           <div className="flex items-center gap-2">
+            {showNewTabButton && (
+              <button
+                onClick={onOpenInNewTab}
+                className="h-9 px-3 rounded-xl bg-grape-100 text-grape-600 flex items-center gap-1.5 hover:bg-grape-200 transition-colors text-sm font-medium"
+                title="在新标签页打开"
+              >
+                <ExternalLink size={16} />
+                <span className="hidden sm:inline">新标签页</span>
+              </button>
+            )}
             {showAddButton && (
               <button
                 onClick={onAddClick}
