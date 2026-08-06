@@ -1,4 +1,4 @@
-import { Leaf, LogOut, User, CalendarDays, List, BarChart3, Plus } from 'lucide-react';
+import { Leaf, LogOut, User, CalendarDays, List, BarChart3, Plus, ChefHat } from 'lucide-react';
 import type { ViewMode } from '../types';
 
 interface HeaderProps {
@@ -14,7 +14,12 @@ export default function Header({ userEmail, onSignOut, currentView, onChangeView
     { id: 'calendar', label: '日历', icon: CalendarDays },
     { id: 'list', label: '列表', icon: List },
     { id: 'stats', label: '统计', icon: BarChart3 },
+    { id: 'pantry', label: '食材库', icon: ChefHat },
   ];
+
+  // pantry 和 cooking 视图都高亮"食材库"标签
+  const activeTab = currentView === 'cooking' ? 'pantry' : currentView;
+  const showAddButton = currentView !== 'pantry' && currentView !== 'cooking';
 
   return (
     <header className="sticky top-0 z-50 glass border-b border-sage-100">
@@ -40,7 +45,7 @@ export default function Header({ userEmail, onSignOut, currentView, onChangeView
                   key={tab.id}
                   onClick={() => onChangeView(tab.id)}
                   className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium transition-all ${
-                    currentView === tab.id
+                    activeTab === tab.id
                       ? 'bg-white text-sage-700 shadow-sm'
                       : 'text-sage-500 hover:text-sage-700'
                   }`}
@@ -54,13 +59,15 @@ export default function Header({ userEmail, onSignOut, currentView, onChangeView
 
           {/* Actions */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={onAddClick}
-              className="w-9 h-9 rounded-xl bg-terra-500 text-white flex items-center justify-center hover:bg-terra-600 active:bg-terra-700 transition-colors shadow-md shadow-terra-500/20"
-              title="添加记录"
-            >
-              <Plus size={20} />
-            </button>
+            {showAddButton && (
+              <button
+                onClick={onAddClick}
+                className="w-9 h-9 rounded-xl bg-terra-500 text-white flex items-center justify-center hover:bg-terra-600 active:bg-terra-700 transition-colors shadow-md shadow-terra-500/20"
+                title="添加记录"
+              >
+                <Plus size={20} />
+              </button>
+            )}
             <div className="hidden sm:flex items-center gap-2 text-sm text-sage-600">
               <User size={16} className="text-sage-400" />
               <span className="max-w-[120px] truncate">{userEmail}</span>

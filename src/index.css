@@ -39,6 +39,17 @@
   --color-gold-400: #dbb55e;
   --color-gold-500: #d4a843;
 
+  --color-grape-50: #f5f3ff;
+  --color-grape-100: #ede9fe;
+  --color-grape-200: #ddd6fe;
+  --color-grape-300: #c4b5fd;
+  --color-grape-400: #a78bfa;
+  --color-grape-500: #8b5cf6;
+  --color-grape-600: #7c3aed;
+  --color-grape-700: #6d28d9;
+  --color-grape-800: #5b21b6;
+  --color-grape-900: #4c1d95;
+
   --font-sans: 'Noto Sans SC', system-ui, -apple-system, sans-serif;
 }
 

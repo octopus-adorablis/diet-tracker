@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import type { MealData } from '../types';
+import type { MealData, PantryItem, Recipe, RecipeItem } from '../types';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder';
@@ -107,6 +107,242 @@ export async function deleteMeal(mealId: string): Promise<boolean> {
 
   if (error) {
     console.error('Error deleting meal:', error);
+    return false;
+  }
+
+  return true;
+}
+
+// ===== 食材库 (pantry_items) CRUD =====
+
+export async function getPantryItems(userId: string): Promise<PantryItem[]> {
+  const { data, error } = await supabase
+    .from('pantry_items')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching pantry items:', error);
+    return [];
+  }
+
+  return (data || []).map(row => ({
+    id: row.id,
+    userId: row.user_id,
+    name: row.name,
+    quantity: row.quantity,
+    status: row.status,
+    createdAt: row.created_at,
+  }));
+}
+
+export async function addPantryItem(item: Omit<PantryItem, 'id' | 'createdAt'>): Promise<PantryItem | null> {
+  const { data, error } = await supabase
+    .from('pantry_items')
+    .insert({
+      user_id: item.userId,
+      name: item.name,
+      quantity: item.quantity,
+      status: item.status,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error adding pantry item:', error);
+    throw new Error(`保存失败: ${error.message}`);
+  }
+
+  return {
+    id: data.id,
+    userId: data.user_id,
+    name: data.name,
+    quantity: data.quantity,
+    status: data.status,
+    createdAt: data.created_at,
+  };
+}
+
+export async function updatePantryItem(id: string, updates: Partial<PantryItem>): Promise<boolean> {
+  const dbUpdates: Record<string, unknown> = {};
+  if (updates.name !== undefined) dbUpdates.name = updates.name;
+  if (updates.quantity !== undefined) dbUpdates.quantity = updates.quantity;
+  if (updates.status !== undefined) dbUpdates.status = updates.status;
+
+  const { error } = await supabase
+    .from('pantry_items')
+    .update(dbUpdates)
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error updating pantry item:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function deletePantryItem(id: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('pantry_items')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error deleting pantry item:', error);
+    return false;
+  }
+
+  return true;
+}
+
+// ===== 菜谱 (recipes) CRUD =====
+
+export async function getRecipes(userId: string): Promise<Recipe[]> {
+  const { data, error } = await supabase
+    .from('recipes')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching recipes:', error);
+    return [];
+  }
+
+  return (data || []).map(row => ({
+    id: row.id,
+    userId: row.user_id,
+    title: row.title,
+    createdAt: row.created_at,
+  }));
+}
+
+export async function addRecipe(recipe: Omit<Recipe, 'id' | 'createdAt'>): Promise<Recipe | null> {
+  const { data, error } = await supabase
+    .from('recipes')
+    .insert({
+      user_id: recipe.userId,
+      title: recipe.title,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error adding recipe:', error);
+    throw new Error(`保存失败: ${error.message}`);
+  }
+
+  return {
+    id: data.id,
+    userId: data.user_id,
+    title: data.title,
+    createdAt: data.created_at,
+  };
+}
+
+export async function updateRecipe(id: string, title: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('recipes')
+    .update({ title })
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error updating recipe:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function deleteRecipe(id: string): Promise<boolean> {
+  // recipe_items 通过外键 ON DELETE CASCADE 自动删除
+  const { error } = await supabase
+    .from('recipes')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error deleting recipe:', error);
+    return false;
+  }
+
+  return true;
+}
+
+// ===== 菜谱食材 (recipe_items) CRUD =====
+
+export async function getRecipeItems(userId: string): Promise<RecipeItem[]> {
+  const { data, error } = await supabase
+    .from('recipe_items')
+    .select('id, recipe_id, name, quantity, recipes!inner(user_id)')
+    .eq('recipes.user_id', userId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching recipe items:', error);
+    return [];
+  }
+
+  return (data || []).map(row => ({
+    id: row.id,
+    recipeId: row.recipe_id,
+    name: row.name,
+    quantity: row.quantity,
+  }));
+}
+
+export async function addRecipeItem(item: Omit<RecipeItem, 'id'>): Promise<RecipeItem | null> {
+  const { data, error } = await supabase
+    .from('recipe_items')
+    .insert({
+      recipe_id: item.recipeId,
+      name: item.name,
+      quantity: item.quantity,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error adding recipe item:', error);
+    throw new Error(`保存失败: ${error.message}`);
+  }
+
+  return {
+    id: data.id,
+    recipeId: data.recipe_id,
+    name: data.name,
+    quantity: data.quantity,
+  };
+}
+
+export async function updateRecipeItem(id: string, updates: Partial<RecipeItem>): Promise<boolean> {
+  const dbUpdates: Record<string, unknown> = {};
+  if (updates.name !== undefined) dbUpdates.name = updates.name;
+  if (updates.quantity !== undefined) dbUpdates.quantity = updates.quantity;
+
+  const { error } = await supabase
+    .from('recipe_items')
+    .update(dbUpdates)
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error updating recipe item:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function deleteRecipeItem(id: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('recipe_items')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error deleting recipe item:', error);
     return false;
   }
 
