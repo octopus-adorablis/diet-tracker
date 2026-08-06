@@ -1,0 +1,17 @@
+{
+  "name": "饮食记录 - Diet Tracker",
+  "short_name": "饮食记录",
+  "description": "记录每一餐，关注你的健康",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAFAF7",
+  "theme_color": "#534AB7",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

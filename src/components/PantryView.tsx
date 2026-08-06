@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Circle, CheckCircle, X, ChefHat, ShoppingCart } from 'lucide-react';
+import { Plus, Circle, CheckCircle, X, ChefHat, ShoppingCart, Trash2 } from 'lucide-react';
 import type { PantryItem, PantryUsage, PantryStatus } from '../types';
 
 interface PantryViewProps {
@@ -8,13 +8,14 @@ interface PantryViewProps {
   onCreatePantryItem: (name: string, quantity: string, status: PantryStatus) => Promise<void>;
   onToggleChecked: (id: string) => Promise<void>;
   onConvertToBuy: (id: string, quantity: string) => Promise<void>;
+  onDeletePantryItem: (id: string) => Promise<void>;
   onNavigateToRecipe: (recipeId: string) => void;
   onNavigateToCooking: () => void;
 }
 
 export default function PantryView({
   pantryItems, getPantryUsage, onCreatePantryItem, onToggleChecked, onConvertToBuy,
-  onNavigateToRecipe, onNavigateToCooking,
+  onDeletePantryItem, onNavigateToRecipe, onNavigateToCooking,
 }: PantryViewProps) {
   const [newName, setNewName] = useState('');
   const [newQty, setNewQty] = useState('');
@@ -107,6 +108,7 @@ export default function PantryView({
                 item={item}
                 usages={getPantryUsage(item.id)}
                 onToggleChecked={onToggleChecked}
+                onDelete={onDeletePantryItem}
                 onNavigateToRecipe={onNavigateToRecipe}
               />
             ))}
@@ -128,6 +130,7 @@ export default function PantryView({
                 item={item}
                 usages={getPantryUsage(item.id)}
                 onBuyClick={handleBuyClick}
+                onDelete={onDeletePantryItem}
                 onNavigateToRecipe={onNavigateToRecipe}
               />
             ))}
@@ -154,6 +157,7 @@ export default function PantryView({
                   item={item}
                   usages={[]}
                   onToggleChecked={onToggleChecked}
+                  onDelete={onDeletePantryItem}
                   onNavigateToRecipe={onNavigateToRecipe}
                 />
               ))}
@@ -231,11 +235,12 @@ export default function PantryView({
 // ===== 现有食材卡片 =====
 
 function PantryItemCard({
-  item, usages, onToggleChecked, onNavigateToRecipe,
+  item, usages, onToggleChecked, onDelete, onNavigateToRecipe,
 }: {
   item: PantryItem;
   usages: PantryUsage[];
   onToggleChecked: (id: string) => void;
+  onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
 }) {
   const isChecked = item.status === 'checked';
@@ -257,6 +262,13 @@ function PantryItemCard({
             {item.quantity}
           </span>
         </div>
+        <button
+          onClick={() => onDelete(item.id)}
+          className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-sage-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+          title="删除"
+        >
+          <Trash2 size={15} />
+        </button>
       </div>
       {/* 使用标注 */}
       {usages.length > 0 && (
@@ -283,11 +295,12 @@ function PantryItemCard({
 // ===== 待买食材卡片 =====
 
 function ToBuyItemCard({
-  item, usages, onBuyClick, onNavigateToRecipe,
+  item, usages, onBuyClick, onDelete, onNavigateToRecipe,
 }: {
   item: PantryItem;
   usages: PantryUsage[];
   onBuyClick: (item: PantryItem) => void;
+  onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
 }) {
   return (
@@ -301,6 +314,15 @@ function ToBuyItemCard({
             <span className="text-[10px] text-sage-400 bg-sage-100 px-1.5 py-0.5 rounded">自动</span>
           )}
         </div>
+        {!item.isVirtual && (
+          <button
+            onClick={() => onDelete(item.id)}
+            className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-sage-300 hover:text-red-500 hover:bg-red-100 transition-colors"
+            title="删除"
+          >
+            <Trash2 size={15} />
+          </button>
+        )}
         <button
           onClick={() => onBuyClick(item)}
           className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-medium hover:bg-red-700 transition-colors shrink-0"

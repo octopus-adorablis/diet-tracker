@@ -78,6 +78,7 @@ function App() {
               onCreatePantryItem={pantryCooking.createPantryItem}
               onToggleChecked={pantryCooking.toggleChecked}
               onConvertToBuy={pantryCooking.convertToBuyToActive}
+              onDeletePantryItem={pantryCooking.removePantryItem}
               onNavigateToRecipe={(recipeId) => navigateToCooking(recipeId)}
               onNavigateToCooking={() => navigateToCooking()}
             />
