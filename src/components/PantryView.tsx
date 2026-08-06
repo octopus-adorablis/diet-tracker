@@ -402,7 +402,7 @@ export default function PantryView({
             onDragEnd={handleQuadrantDragEnd}
             onDragCancel={() => setActiveId(null)}
           >
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-2 sm:gap-3">
               {QUADRANTS.map(q => {
                 const items = itemsByCategory[q.id];
                 const style = QUADRANT_STYLES[q.id];
@@ -594,41 +594,43 @@ function QuadrantZone({
   return (
     <div
       ref={setNodeRef}
-      className={`rounded-2xl border-2 p-3 min-h-[110px] transition-all ${style.zone} ${
+      className={`rounded-2xl border-2 p-2 sm:p-3 min-h-[140px] sm:min-h-[160px] max-h-[calc(50vh-70px)] sm:max-h-[calc(50vh-60px)] flex flex-col overflow-hidden transition-all ${style.zone} ${
         isOver ? 'border-solid ' + style.zoneOver + ' scale-[1.02] shadow-lg'
         : isDragging ? 'border-dashed border-sage-300'
         : 'border-dashed border-sage-200/60'
       }`}
     >
-      <div className="flex items-center justify-between mb-2 px-1">
-        <div className="flex items-center gap-1.5">
-          <Icon size={15} className={style.icon} />
-          <span className={`text-xs font-medium ${style.label}`}>{label}</span>
+      <div className="flex items-center justify-between mb-1.5 sm:mb-2 px-1 shrink-0">
+        <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
+          <Icon className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 ${style.icon}`} />
+          <span className={`text-xs font-medium truncate max-w-[4rem] sm:max-w-[6rem] ${style.label}`}>{label}</span>
         </div>
         <span className="text-xs text-sage-400">{items.length}</span>
       </div>
-      <SortableContext items={items.map(i => i.id)} strategy={verticalListSortingStrategy}>
-        <div className="space-y-2">
-          {items.map(item => (
-            <SortablePantryItemCard
-              key={item.id}
-              item={item}
-              usages={getPantryUsage(item.id)}
-              onToggleChecked={onToggleChecked}
-              onDelete={onDelete}
-              onNavigateToRecipe={onNavigateToRecipe}
-              selectionMode={selectionMode}
-              isSelected={selectedIds.has(item.id)}
-              onToggleSelect={onToggleSelect}
-            />
-          ))}
-          {items.length === 0 && (
-            <div className={`text-center text-xs py-4 ${isOver ? style.label : 'text-sage-300'}`}>
-              {isOver ? '松手放到这里' : '拖食材到这里'}
-            </div>
-          )}
-        </div>
-      </SortableContext>
+      <div className="flex-1 min-h-0 overflow-y-auto -mx-1 px-1">
+        <SortableContext items={items.map(i => i.id)} strategy={verticalListSortingStrategy}>
+          <div className="space-y-2">
+            {items.map(item => (
+              <SortablePantryItemCard
+                key={item.id}
+                item={item}
+                usages={getPantryUsage(item.id)}
+                onToggleChecked={onToggleChecked}
+                onDelete={onDelete}
+                onNavigateToRecipe={onNavigateToRecipe}
+                selectionMode={selectionMode}
+                isSelected={selectedIds.has(item.id)}
+                onToggleSelect={onToggleSelect}
+              />
+            ))}
+          </div>
+        </SortableContext>
+        {items.length === 0 && (
+          <div className={`text-center text-xs py-4 ${isOver ? style.label : 'text-sage-300'}`}>
+            {isOver ? '松手放到这里' : '拖食材到这里'}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -666,13 +668,12 @@ function SortablePantryItemCard({
       ref={setNodeRef}
       style={style}
       {...attributes}
-      {...listeners}
       onClick={selectionMode ? () => onToggleSelect(item.id) : undefined}
-      className={`bg-white rounded-xl border p-3 touch-none transition-shadow ${
+      className={`bg-white rounded-xl border p-2 sm:p-3 transition-shadow ${
         isSelected ? 'border-grape-400 bg-grape-50/50 ring-2 ring-grape-200' : 'border-sage-100'
       } ${isChecked ? 'opacity-50' : ''} ${isDragging ? 'shadow-lg border-grape-300' : ''}`}
     >
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3">
         {/* 左侧：选择模式=勾选框，普通模式=勾选用完圆点 */}
         {selectionMode ? (
           <button
@@ -694,6 +695,7 @@ function SortablePantryItemCard({
         {/* 拖拽手柄：即点即拖 */}
         <span
           data-pantry-handle
+          {...listeners}
           className="shrink-0 flex items-center justify-center w-5 h-5 -ml-1 cursor-grab active:cursor-grabbing text-sage-200 hover:text-grape-400 transition-colors touch-none"
           title="拖动"
         >
