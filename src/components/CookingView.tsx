@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, X, ChefHat, ArrowLeft, Check, RotateCcw } from 'lucide-react';
+import { Plus, X, ChefHat, ArrowLeft, Check, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
 import type { Recipe, RecipeItemWithMatch } from '../types';
 
 interface CookingViewProps {
@@ -140,6 +140,7 @@ function RecipeCard({
   const [titleValue, setTitleValue] = useState(recipe.title);
   const [newName, setNewName] = useState('');
   const [newQty, setNewQty] = useState('');
+  const [expanded, setExpanded] = useState(false);
 
   const handleSaveTitle = async () => {
     if (titleValue.trim() && titleValue !== recipe.title) {
@@ -194,7 +195,14 @@ function RecipeCard({
           </span>
         )}
         {!isActive && (
-          <span className="text-xs text-sage-400 shrink-0">已结束</span>
+          <button
+            onClick={() => setExpanded(e => !e)}
+            className="flex items-center gap-1 text-xs text-sage-400 hover:text-sage-600 shrink-0 transition-colors"
+          >
+            <span>已结束</span>
+            <span className="hidden sm:inline">{expanded ? '收起' : '查看明细'}</span>
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
         )}
         <button
           onClick={() => onToggleActive(recipe.id)}
@@ -275,6 +283,41 @@ function RecipeCard({
         >
           <Plus size={16} />
         </button>
+        </div>
+      )}
+
+      {/* 已完成菜谱明细（可展开查看，只读） */}
+      {!isActive && expanded && items.length > 0 && (
+        <div className="px-3 py-2 space-y-1 border-t border-sage-100">
+          {items.map(item => (
+            <div
+              key={item.id}
+              className={`flex items-center gap-3 px-2 py-2 rounded-lg ${
+                item.matchStatus === 'to_buy' ? 'bg-red-50' : 'bg-cream-50'
+              }`}
+            >
+              <span className="text-sm text-sage-800 flex-1">{item.name}</span>
+              <span className="text-sm text-sage-500">{item.quantity}</span>
+              {item.matchStatus === 'matched' ? (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-100 text-xs text-sage-700 shrink-0">
+                  <span className="w-1.5 h-1.5 rounded-full bg-sage-500" />
+                  已有
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-100 text-xs text-red-700 shrink-0">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                  待购买
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 已完成且无食材的提示 */}
+      {!isActive && expanded && items.length === 0 && (
+        <div className="px-3 py-3 text-center text-xs text-sage-400 border-t border-sage-100">
+          这道菜没有记录食材
         </div>
       )}
     </div>
