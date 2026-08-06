@@ -124,6 +124,7 @@ function App() {
               onDeletePantryItem={pantryCooking.removePantryItem}
               onReorder={pantryCooking.reorderPantryItems}
               onSetCategory={pantryCooking.setPantryCategory}
+              onSetCategoryBatch={pantryCooking.setPantryCategoryBatch}
               onNavigateToRecipe={(recipeId) => navigateToCooking(recipeId)}
               onNavigateToCooking={() => navigateToCooking()}
               onOpenCookingInNewTab={() => openInNewTab('cooking')}

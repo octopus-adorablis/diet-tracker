@@ -212,6 +212,33 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     await editPantryItem(id, { category, sortOrder: maxOrder + 1 });
   }, [pantryItems, editPantryItem]);
 
+  // 批量修改分类：多选食材一起拖到目标象限
+  const setPantryCategoryBatch = useCallback(async (ids: string[], category: PantryCategory) => {
+    const realIds = ids.filter(id => !id.startsWith('virtual-'));
+    if (realIds.length === 0) return;
+    // 目标象限当前最大 sortOrder，批量分配递增顺序
+    const maxOrder = Math.max(-1, ...pantryItems
+      .filter(p => p.status === 'active' && p.category === category)
+      .map(p => p.sortOrder ?? 0));
+    const orderMap = new Map<string, { category: PantryCategory; sortOrder: number }>(
+      realIds.map((id, idx) => [id, { category, sortOrder: maxOrder + 1 + idx }])
+    );
+    // 乐观更新
+    setPantryItems(prev => prev.map(p =>
+      orderMap.has(p.id) ? { ...p, ...orderMap.get(p.id) } : p
+    ));
+    if (isDemo || !configured) {
+      const all = getDemoPantry().map(p =>
+        orderMap.has(p.id) ? { ...p, ...orderMap.get(p.id) } : p
+      );
+      saveDemoPantry(all);
+      return;
+    }
+    await Promise.all(
+      realIds.map((id, idx) => updatePantryItem(id, { category, sortOrder: maxOrder + 1 + idx }))
+    );
+  }, [pantryItems, isDemo, configured]);
+
   // ===== 菜谱 CRUD =====
 
   const createRecipe = useCallback(async (title: string): Promise<Recipe | null> => {
@@ -372,6 +399,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     convertToBuyToActive,
     reorderPantryItems,
     setPantryCategory,
+    setPantryCategoryBatch,
     createRecipe,
     editRecipeTitle,
     removeRecipe,
