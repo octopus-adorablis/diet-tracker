@@ -1,8 +1,8 @@
 import { useState, useMemo, useRef } from 'react';
 import { Plus, Circle, CheckCircle, X, ChefHat, ShoppingCart, Trash2, GripVertical, ExternalLink, LayoutGrid, List, Beef, Carrot, Wheat, Package } from 'lucide-react';
 import {
-  DndContext, closestCenter, PointerSensor, useSensor, useSensors, useDroppable, DragOverlay,
-  type DragEndEvent, type DragStartEvent,
+  DndContext, closestCenter, pointerWithin, PointerSensor, useSensor, useSensors, useDroppable, DragOverlay,
+  type DragEndEvent, type DragStartEvent, type CollisionDetection,
 } from '@dnd-kit/core';
 import {
   SortableContext, useSortable, verticalListSortingStrategy,
@@ -90,6 +90,14 @@ export default function PantryView({
       },
     })
   );
+
+  // 四象限碰撞检测：优先用指针所在区域(pointerWithin)精确命中，
+  // 指针不在任何区域时 fallback 到 closestCenter，解决跨象限拖拽误判
+  const quadrantCollision: CollisionDetection = (args) => {
+    const pointerCollisions = pointerWithin(args);
+    if (pointerCollisions.length > 0) return pointerCollisions;
+    return closestCenter(args);
+  };
 
   const toggleLayout = () => {
     const next = layoutMode === 'list' ? 'quadrant' : 'list';
@@ -363,7 +371,7 @@ export default function PantryView({
           </div>
           <DndContext
             sensors={sensors}
-            collisionDetection={closestCenter}
+            collisionDetection={quadrantCollision}
             onDragStart={handleDragStart}
             onDragEnd={handleQuadrantDragEnd}
             onDragCancel={() => setActiveId(null)}
