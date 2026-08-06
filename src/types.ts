@@ -87,6 +87,7 @@ export interface Recipe {
   userId: string;
   title: string;
   createdAt: string;
+  active?: boolean; // 是否激活（true=在做/提示买菜, false=已做完不再提示）
 }
 
 export interface RecipeItem {

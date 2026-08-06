@@ -3,7 +3,7 @@ import { arrayMove } from '@dnd-kit/sortable';
 import {
   getPantryItems, addPantryItem, updatePantryItem, deletePantryItem,
   updatePantrySortOrders,
-  getRecipes, addRecipe, updateRecipe, deleteRecipe,
+  getRecipes, addRecipe, updateRecipe, updateRecipeActive, deleteRecipe,
   getRecipeItems, addRecipeItem, updateRecipeItem, deleteRecipeItem,
 } from '../lib/supabase';
 import type { PantryItem, Recipe, RecipeItem, PantryUsage, RecipeItemWithMatch, PantryStatus, PantryCategory } from '../types';
@@ -89,10 +89,14 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         .filter(p => p.status === 'active' || p.status === 'to_buy')
         .map(p => p.name)
     );
+    // 只考虑激活中的菜谱（已关闭的菜谱不再提示买菜）
+    const activeRecipeIds = new Set(recipes.filter(r => r.active !== false).map(r => r.id));
     const virtualItems: PantryItem[] = [];
     const seenNames = new Set<string>();
 
-    const sorted = [...recipeItems].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = [...recipeItems]
+      .filter(ri => activeRecipeIds.has(ri.recipeId))
+      .sort((a, b) => a.name.localeCompare(b.name));
     for (const ri of sorted) {
       if (!existingNames.has(ri.name) && !seenNames.has(ri.name)) {
         seenNames.add(ri.name);
@@ -109,7 +113,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       }
     }
     return virtualItems;
-  }, [pantryItems, recipeItems, userId]);
+  }, [pantryItems, recipeItems, recipes, userId]);
 
   // 合并所有食材（现有 + 待买 + 已用完 + 虚拟待买），兜底旧数据缺失的 category
   const allPantryItems = useMemo(() => {
@@ -244,7 +248,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
   const createRecipe = useCallback(async (title: string): Promise<Recipe | null> => {
     if (!userId) return null;
     if (isDemo || !configured) {
-      const recipe: Recipe = { id: genId(), userId, title, createdAt: new Date().toISOString() };
+      const recipe: Recipe = { id: genId(), userId, title, createdAt: new Date().toISOString(), active: true };
       const updated = [...getDemoRecipes(), recipe];
       saveDemoRecipes(updated);
       setRecipes(updated);
@@ -265,6 +269,21 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     await updateRecipe(id, title);
     setRecipes(prev => prev.map(r => r.id === id ? { ...r, title } : r));
   }, [isDemo, configured]);
+
+  // 切换菜谱激活/关闭状态（关闭后不再提示买菜、不再占用食材）
+  const toggleRecipeActive = useCallback(async (id: string) => {
+    const recipe = recipes.find(r => r.id === id);
+    if (!recipe) return;
+    const newActive = recipe.active === false; // 已关闭→打开，激活中→关闭
+    if (isDemo || !configured) {
+      const updated = getDemoRecipes().map(r => r.id === id ? { ...r, active: newActive } : r);
+      saveDemoRecipes(updated);
+      setRecipes(updated);
+      return;
+    }
+    await updateRecipeActive(id, newActive);
+    setRecipes(prev => prev.map(r => r.id === id ? { ...r, active: newActive } : r));
+  }, [recipes, isDemo, configured]);
 
   const removeRecipe = useCallback(async (id: string) => {
     if (isDemo || !configured) {
@@ -343,6 +362,8 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     for (const ri of recipeItems) {
       const recipe = recipes.find(r => r.id === ri.recipeId);
       if (!recipe) continue;
+      // 已关闭的菜谱不再参与食材使用计算
+      if (recipe.active === false) continue;
 
       const usage: PantryUsage = {
         recipeId: recipe.id,
@@ -402,6 +423,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     setPantryCategoryBatch,
     createRecipe,
     editRecipeTitle,
+    toggleRecipeActive,
     removeRecipe,
     createRecipeItem,
     editRecipeItem,

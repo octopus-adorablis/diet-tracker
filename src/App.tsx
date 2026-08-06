@@ -135,6 +135,7 @@ function App() {
               getRecipeItemsWithMatch={pantryCooking.getRecipeItemsWithMatch}
               onCreateRecipe={pantryCooking.createRecipe}
               onEditRecipeTitle={pantryCooking.editRecipeTitle}
+              onToggleActive={pantryCooking.toggleRecipeActive}
               onDeleteRecipe={pantryCooking.removeRecipe}
               onCreateRecipeItem={pantryCooking.createRecipeItem}
               onDeleteRecipeItem={pantryCooking.removeRecipeItem}

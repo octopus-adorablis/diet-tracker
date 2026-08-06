@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, X, ChefHat, ArrowLeft } from 'lucide-react';
+import { Plus, X, ChefHat, ArrowLeft, Check, RotateCcw } from 'lucide-react';
 import type { Recipe, RecipeItemWithMatch } from '../types';
 
 interface CookingViewProps {
@@ -7,6 +7,7 @@ interface CookingViewProps {
   getRecipeItemsWithMatch: (recipeId: string) => RecipeItemWithMatch[];
   onCreateRecipe: (title: string) => Promise<Recipe | null>;
   onEditRecipeTitle: (id: string, title: string) => Promise<void>;
+  onToggleActive: (id: string) => Promise<void>;
   onDeleteRecipe: (id: string) => Promise<void>;
   onCreateRecipeItem: (recipeId: string, name: string, quantity: string) => Promise<void>;
   onDeleteRecipeItem: (id: string) => Promise<void>;
@@ -15,7 +16,7 @@ interface CookingViewProps {
 
 export default function CookingView({
   recipes, getRecipeItemsWithMatch,
-  onCreateRecipe, onEditRecipeTitle, onDeleteRecipe,
+  onCreateRecipe, onEditRecipeTitle, onToggleActive, onDeleteRecipe,
   onCreateRecipeItem, onDeleteRecipeItem, onNavigateToPantry,
 }: CookingViewProps) {
   const [showNewRecipe, setShowNewRecipe] = useState(false);
@@ -91,6 +92,7 @@ export default function CookingView({
           recipe={recipe}
           items={getRecipeItemsWithMatch(recipe.id)}
           onEditTitle={onEditRecipeTitle}
+          onToggleActive={onToggleActive}
           onDelete={onDeleteRecipe}
           onAddItem={onCreateRecipeItem}
           onDeleteItem={onDeleteRecipeItem}
@@ -124,11 +126,12 @@ export default function CookingView({
 // ===== 菜谱卡片 =====
 
 function RecipeCard({
-  recipe, items, onEditTitle, onDelete, onAddItem, onDeleteItem,
+  recipe, items, onEditTitle, onToggleActive, onDelete, onAddItem, onDeleteItem,
 }: {
   recipe: Recipe;
   items: RecipeItemWithMatch[];
   onEditTitle: (id: string, title: string) => Promise<void>;
+  onToggleActive: (id: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onAddItem: (recipeId: string, name: string, quantity: string) => Promise<void>;
   onDeleteItem: (id: string) => Promise<void>;
@@ -155,9 +158,10 @@ function RecipeCard({
   };
 
   const matchedCount = items.filter(i => i.matchStatus === 'matched').length;
+  const isActive = recipe.active !== false;
 
   return (
-    <div id={`recipe-${recipe.id}`} className="bg-white rounded-2xl border border-sage-100 overflow-hidden transition-all duration-500">
+    <div id={`recipe-${recipe.id}`} className={`bg-white rounded-2xl border overflow-hidden transition-all duration-500 ${isActive ? 'border-sage-100' : 'border-sage-200 opacity-60'}`}>
       {/* 卡片头部 */}
       <div className="bg-cream-50 px-4 py-3 flex items-center gap-3">
         <div className="w-8 h-8 rounded-lg bg-grape-100 flex items-center justify-center shrink-0">
@@ -184,9 +188,26 @@ function RecipeCard({
             {recipe.title}
           </button>
         )}
-        <span className="text-xs text-sage-400 shrink-0">
-          {items.length} 种食材 · {matchedCount} 已有
-        </span>
+        {isActive && (
+          <span className="text-xs text-sage-400 shrink-0">
+            {items.length} 种食材 · {matchedCount} 已有
+          </span>
+        )}
+        {!isActive && (
+          <span className="text-xs text-sage-400 shrink-0">已结束</span>
+        )}
+        <button
+          onClick={() => onToggleActive(recipe.id)}
+          title={isActive ? '标记为已完成' : '重新开始这道菜'}
+          className={`h-7 px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors shrink-0 ${
+            isActive
+              ? 'text-sage-400 hover:bg-sage-100 hover:text-sage-600'
+              : 'text-grape-600 bg-grape-50 hover:bg-grape-100'
+          }`}
+        >
+          {isActive ? <Check size={15} /> : <RotateCcw size={15} />}
+          <span className="hidden sm:inline">{isActive ? '完成' : '再做'}</span>
+        </button>
         <button
           onClick={() => onDelete(recipe.id)}
           className="w-7 h-7 rounded-lg text-sage-300 hover:bg-red-50 hover:text-red-500 flex items-center justify-center transition-colors shrink-0"
@@ -195,8 +216,8 @@ function RecipeCard({
         </button>
       </div>
 
-      {/* 食材列表 */}
-      {items.length > 0 && (
+      {/* 食材列表（仅激活时显示） */}
+      {isActive && items.length > 0 && (
         <div className="px-3 py-2 space-y-1">
           {items.map(item => (
             <div
@@ -229,8 +250,9 @@ function RecipeCard({
         </div>
       )}
 
-      {/* 添加食材栏 */}
-      <div className="px-3 pb-3 pt-1 flex items-center gap-2">
+      {/* 添加食材栏（仅激活时显示） */}
+      {isActive && (
+        <div className="px-3 pb-3 pt-1 flex items-center gap-2">
         <input
           type="text"
           value={newName}
@@ -253,7 +275,8 @@ function RecipeCard({
         >
           <Plus size={16} />
         </button>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

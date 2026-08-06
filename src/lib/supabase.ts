@@ -235,6 +235,7 @@ export async function getRecipes(userId: string): Promise<Recipe[]> {
     userId: row.user_id,
     title: row.title,
     createdAt: row.created_at,
+    active: row.active !== false, // 兜底 true，字段缺失或 null 时视为激活
   }));
 }
 
@@ -258,7 +259,22 @@ export async function addRecipe(recipe: Omit<Recipe, 'id' | 'createdAt'>): Promi
     userId: data.user_id,
     title: data.title,
     createdAt: data.created_at,
+    active: data.active !== false, // 兜底 true
   };
+}
+
+export async function updateRecipeActive(id: string, active: boolean): Promise<boolean> {
+  const { error } = await supabase
+    .from('recipes')
+    .update({ active })
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error updating recipe active:', error);
+    return false;
+  }
+
+  return true;
 }
 
 export async function updateRecipe(id: string, title: string): Promise<boolean> {
