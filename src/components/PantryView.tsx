@@ -1,14 +1,30 @@
-import { useState } from 'react';
-import { Plus, Circle, CheckCircle, X, ChefHat, ShoppingCart, Trash2, GripVertical, ExternalLink } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Plus, Circle, CheckCircle, X, ChefHat, ShoppingCart, Trash2, GripVertical, ExternalLink, LayoutGrid, List } from 'lucide-react';
 import {
-  DndContext, closestCenter, PointerSensor, useSensor, useSensors,
+  DndContext, closestCenter, PointerSensor, useSensor, useSensors, useDroppable,
   type DragEndEvent,
 } from '@dnd-kit/core';
 import {
   SortableContext, useSortable, verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { PantryItem, PantryUsage, PantryStatus } from '../types';
+import type { PantryItem, PantryUsage, PantryStatus, PantryCategory } from '../types';
+
+// 四象限配置
+const QUADRANTS: { id: PantryCategory; label: string }[] = [
+  { id: 'meat_dairy', label: '肉类&乳制品' },
+  { id: 'vegetable', label: '蔬菜' },
+  { id: 'staple', label: '主食' },
+  { id: 'other', label: '其他' },
+];
+
+// 各象限配色（静态类名，避免 Tailwind purge）
+const QUADRANT_STYLES: Record<PantryCategory, { dot: string; label: string; zone: string; zoneOver: string }> = {
+  meat_dairy: { dot: 'bg-terra-400', label: 'text-terra-600', zone: 'bg-terra-50/60', zoneOver: 'border-terra-300 bg-terra-50' },
+  vegetable: { dot: 'bg-ocean-400', label: 'text-ocean-600', zone: 'bg-ocean-50/60', zoneOver: 'border-ocean-300 bg-ocean-50' },
+  staple: { dot: 'bg-gold-400', label: 'text-gold-500', zone: 'bg-gold-50/60', zoneOver: 'border-gold-300 bg-gold-50' },
+  other: { dot: 'bg-grape-400', label: 'text-grape-600', zone: 'bg-grape-50/60', zoneOver: 'border-grape-300 bg-grape-50' },
+};
 
 interface PantryViewProps {
   pantryItems: PantryItem[];
@@ -18,6 +34,7 @@ interface PantryViewProps {
   onConvertToBuy: (id: string, quantity: string) => Promise<void>;
   onDeletePantryItem: (id: string) => Promise<void>;
   onReorder: (activeList: PantryItem[], oldIndex: number, newIndex: number) => Promise<void>;
+  onSetCategory: (id: string, category: PantryCategory) => Promise<void>;
   onNavigateToRecipe: (recipeId: string) => void;
   onNavigateToCooking: () => void;
   onOpenCookingInNewTab: () => void;
@@ -25,17 +42,35 @@ interface PantryViewProps {
 
 export default function PantryView({
   pantryItems, getPantryUsage, onCreatePantryItem, onToggleChecked, onConvertToBuy,
-  onDeletePantryItem, onReorder, onNavigateToRecipe, onNavigateToCooking, onOpenCookingInNewTab,
+  onDeletePantryItem, onReorder, onSetCategory, onNavigateToRecipe, onNavigateToCooking, onOpenCookingInNewTab,
 }: PantryViewProps) {
   const [newName, setNewName] = useState('');
   const [newQty, setNewQty] = useState('');
   const [showChecked, setShowChecked] = useState(false);
   const [buyDialogItem, setBuyDialogItem] = useState<PantryItem | null>(null);
   const [buyQty, setBuyQty] = useState('');
+  const [layoutMode, setLayoutMode] = useState<'list' | 'quadrant'>(() => {
+    return (localStorage.getItem('diet_tracker_pantry_layout') as 'list' | 'quadrant') || 'list';
+  });
 
   const activeItems = pantryItems.filter(p => p.status === 'active');
   const toBuyItems = pantryItems.filter(p => p.status === 'to_buy');
   const checkedItems = pantryItems.filter(p => p.status === 'checked');
+
+  // 四象限：按分类分组，组内按 sortOrder 排序
+  const itemsByCategory = useMemo(() => {
+    const map: Record<PantryCategory, PantryItem[]> = {
+      meat_dairy: [], vegetable: [], staple: [], other: [],
+    };
+    for (const item of activeItems) {
+      const cat = (item.category || 'other') as PantryCategory;
+      map[cat].push(item);
+    }
+    for (const cat of Object.keys(map) as PantryCategory[]) {
+      map[cat].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    }
+    return map;
+  }, [activeItems]);
 
   // 长按 250ms 激活拖拽，兼容触摸和鼠标；快速点击不受影响
   const sensors = useSensors(
@@ -44,6 +79,13 @@ export default function PantryView({
     })
   );
 
+  const toggleLayout = () => {
+    const next = layoutMode === 'list' ? 'quadrant' : 'list';
+    setLayoutMode(next);
+    localStorage.setItem('diet_tracker_pantry_layout', next);
+  };
+
+  // 列表模式拖拽：排序
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -51,6 +93,45 @@ export default function PantryView({
     const newIndex = activeItems.findIndex(i => i.id === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
     onReorder(activeItems, oldIndex, newIndex);
+  };
+
+  // 四象限模式拖拽：跨象限=改分类，同象限=排序
+  const handleQuadrantDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over) return;
+    const activeItem = activeItems.find(i => i.id === active.id);
+    if (!activeItem) return;
+
+    const overId = String(over.id);
+
+    // 拖到象限空白区域 → 改分类
+    if (overId.startsWith('quad-')) {
+      const targetCategory = overId.replace('quad-', '') as PantryCategory;
+      if ((activeItem.category || 'other') !== targetCategory) {
+        onSetCategory(String(active.id), targetCategory);
+      }
+      return;
+    }
+
+    // 拖到某个食材上
+    const overItem = activeItems.find(i => i.id === over.id);
+    if (!overItem || overItem.id === activeItem.id) return;
+
+    const activeCat = (activeItem.category || 'other') as PantryCategory;
+    const overCat = (overItem.category || 'other') as PantryCategory;
+
+    if (activeCat !== overCat) {
+      // 跨象限 → 改分类到目标象限
+      onSetCategory(String(active.id), overCat);
+    } else {
+      // 同象限 → 排序
+      const catItems = itemsByCategory[activeCat];
+      const oldIndex = catItems.findIndex(i => i.id === active.id);
+      const newIndex = catItems.findIndex(i => i.id === over.id);
+      if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+        onReorder(catItems, oldIndex, newIndex);
+      }
+    }
   };
 
   const handleAdd = async () => {
@@ -86,6 +167,15 @@ export default function PantryView({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {activeItems.length > 0 && (
+            <button
+              onClick={toggleLayout}
+              className="w-9 h-9 rounded-xl bg-grape-100 text-grape-600 flex items-center justify-center hover:bg-grape-200 transition-colors"
+              title={layoutMode === 'list' ? '切换到四象限视图' : '切换到列表视图'}
+            >
+              {layoutMode === 'list' ? <LayoutGrid size={16} /> : <List size={16} />}
+            </button>
+          )}
           <button
             onClick={onNavigateToCooking}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-grape-600 text-white text-sm font-medium hover:bg-grape-700 transition-colors shadow-sm"
@@ -129,8 +219,8 @@ export default function PantryView({
         </button>
       </div>
 
-      {/* 现有食材（可拖拽排序） */}
-      {activeItems.length > 0 && (
+      {/* 现有食材 - 列表模式 */}
+      {activeItems.length > 0 && layoutMode === 'list' && (
         <div>
           <div className="flex items-center justify-between mb-2 px-1">
             <span className="text-xs font-medium text-sage-500 tracking-wider">现有食材</span>
@@ -155,6 +245,41 @@ export default function PantryView({
                 ))}
               </div>
             </SortableContext>
+          </DndContext>
+        </div>
+      )}
+
+      {/* 现有食材 - 四象限模式 */}
+      {activeItems.length > 0 && layoutMode === 'quadrant' && (
+        <div>
+          <div className="flex items-center justify-between mb-2 px-1">
+            <span className="text-xs font-medium text-sage-500 tracking-wider">现有食材 · 四象限</span>
+            <span className="text-xs text-sage-400">{activeItems.length} 项 · 拖到象限分类</span>
+          </div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleQuadrantDragEnd}
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {QUADRANTS.map(q => {
+                const items = itemsByCategory[q.id];
+                const style = QUADRANT_STYLES[q.id];
+                return (
+                  <QuadrantZone
+                    key={q.id}
+                    category={q.id}
+                    label={q.label}
+                    items={items}
+                    style={style}
+                    getPantryUsage={getPantryUsage}
+                    onToggleChecked={onToggleChecked}
+                    onDelete={onDeletePantryItem}
+                    onNavigateToRecipe={onNavigateToRecipe}
+                  />
+                );
+              })}
+            </div>
           </DndContext>
         </div>
       )}
@@ -271,6 +396,54 @@ export default function PantryView({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ===== 四象限区块（可放置区域 + 组内排序） =====
+
+function QuadrantZone({
+  category, label, items, style, getPantryUsage, onToggleChecked, onDelete, onNavigateToRecipe,
+}: {
+  category: PantryCategory;
+  label: string;
+  items: PantryItem[];
+  style: { dot: string; label: string; zone: string; zoneOver: string };
+  getPantryUsage: (id: string) => PantryUsage[];
+  onToggleChecked: (id: string) => void;
+  onDelete: (id: string) => void;
+  onNavigateToRecipe: (recipeId: string) => void;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: `quad-${category}` });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`rounded-2xl border-2 border-dashed p-3 min-h-[110px] transition-colors ${style.zone} ${isOver ? style.zoneOver : 'border-sage-200/60'}`}
+    >
+      <div className="flex items-center justify-between mb-2 px-1">
+        <div className="flex items-center gap-1.5">
+          <span className={`w-2 h-2 rounded-full ${style.dot}`} />
+          <span className={`text-xs font-medium ${style.label}`}>{label}</span>
+        </div>
+        <span className="text-xs text-sage-400">{items.length}</span>
+      </div>
+      <SortableContext items={items.map(i => i.id)} strategy={verticalListSortingStrategy}>
+        <div className="space-y-2">
+          {items.map(item => (
+            <SortablePantryItemCard
+              key={item.id}
+              item={item}
+              usages={getPantryUsage(item.id)}
+              onToggleChecked={onToggleChecked}
+              onDelete={onDelete}
+              onNavigateToRecipe={onNavigateToRecipe}
+            />
+          ))}
+          {items.length === 0 && (
+            <div className="text-center text-xs text-sage-300 py-4">拖食材到这里</div>
+          )}
+        </div>
+      </SortableContext>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import type { MealData, PantryItem, Recipe, RecipeItem } from '../types';
+import type { MealData, PantryItem, PantryCategory, Recipe, RecipeItem } from '../types';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder';
@@ -134,6 +134,7 @@ export async function getPantryItems(userId: string): Promise<PantryItem[]> {
     name: row.name,
     quantity: row.quantity,
     status: row.status,
+    category: (row.category as PantryCategory) || 'other',
     createdAt: row.created_at,
     sortOrder: row.sort_order ?? 0,
   }));
@@ -147,6 +148,7 @@ export async function addPantryItem(item: Omit<PantryItem, 'id' | 'createdAt'>):
       name: item.name,
       quantity: item.quantity,
       status: item.status,
+      category: item.category || 'other',
       sort_order: item.sortOrder ?? 0,
     })
     .select()
@@ -163,6 +165,7 @@ export async function addPantryItem(item: Omit<PantryItem, 'id' | 'createdAt'>):
     name: data.name,
     quantity: data.quantity,
     status: data.status,
+    category: (data.category as PantryCategory) || 'other',
     createdAt: data.created_at,
     sortOrder: data.sort_order ?? 0,
   };
@@ -174,6 +177,7 @@ export async function updatePantryItem(id: string, updates: Partial<PantryItem>)
   if (updates.quantity !== undefined) dbUpdates.quantity = updates.quantity;
   if (updates.status !== undefined) dbUpdates.status = updates.status;
   if (updates.sortOrder !== undefined) dbUpdates.sort_order = updates.sortOrder;
+  if (updates.category !== undefined) dbUpdates.category = updates.category;
 
   const { error } = await supabase
     .from('pantry_items')

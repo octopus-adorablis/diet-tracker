@@ -67,12 +67,16 @@ export interface AIMealImport {
 
 export type PantryStatus = 'active' | 'to_buy' | 'checked';
 
+// 食材分类（四象限）
+export type PantryCategory = 'meat_dairy' | 'vegetable' | 'staple' | 'other';
+
 export interface PantryItem {
   id: string;
   userId: string;
   name: string;
   quantity: string;
   status: PantryStatus;
+  category: PantryCategory;
   createdAt: string;
   sortOrder?: number;
   isVirtual?: boolean;

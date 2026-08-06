@@ -6,7 +6,7 @@ import {
   getRecipes, addRecipe, updateRecipe, deleteRecipe,
   getRecipeItems, addRecipeItem, updateRecipeItem, deleteRecipeItem,
 } from '../lib/supabase';
-import type { PantryItem, Recipe, RecipeItem, PantryUsage, RecipeItemWithMatch, PantryStatus } from '../types';
+import type { PantryItem, Recipe, RecipeItem, PantryUsage, RecipeItemWithMatch, PantryStatus, PantryCategory } from '../types';
 
 const DEMO_PANTRY_KEY = 'diet_tracker_demo_pantry';
 const DEMO_RECIPES_KEY = 'diet_tracker_demo_recipes';
@@ -102,6 +102,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
           name: ri.name,
           quantity: ri.quantity,
           status: 'to_buy' as PantryStatus,
+          category: 'other' as PantryCategory,
           createdAt: '',
           isVirtual: true,
         });
@@ -110,9 +111,12 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     return virtualItems;
   }, [pantryItems, recipeItems, userId]);
 
-  // 合并所有食材（现有 + 待买 + 已用完 + 虚拟待买）
+  // 合并所有食材（现有 + 待买 + 已用完 + 虚拟待买），兜底旧数据缺失的 category
   const allPantryItems = useMemo(() => {
-    return [...pantryItems, ...virtualToBuyItems];
+    return [...pantryItems, ...virtualToBuyItems].map(p => ({
+      ...p,
+      category: (p.category || 'other') as PantryCategory,
+    }));
   }, [pantryItems, virtualToBuyItems]);
 
   // ===== 食材库 CRUD =====
@@ -122,14 +126,14 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     if (isDemo || !configured) {
       const existing = getDemoPantry();
       const maxOrder = Math.max(0, ...existing.filter(p => p.status === 'active').map(p => p.sortOrder ?? 0));
-      const item: PantryItem = { id: genId(), userId, name, quantity, status, createdAt: new Date().toISOString(), sortOrder: status === 'active' ? maxOrder + 1 : 0 };
+      const item: PantryItem = { id: genId(), userId, name, quantity, status, category: 'other', createdAt: new Date().toISOString(), sortOrder: status === 'active' ? maxOrder + 1 : 0 };
       const updated = [...existing, item];
       saveDemoPantry(updated);
       setPantryItems(updated);
       return;
     }
     const maxOrder = Math.max(0, ...pantryItems.filter(p => p.status === 'active').map(p => p.sortOrder ?? 0));
-    const result = await addPantryItem({ userId, name, quantity, status, sortOrder: status === 'active' ? maxOrder + 1 : 0 });
+    const result = await addPantryItem({ userId, name, quantity, status, category: 'other', sortOrder: status === 'active' ? maxOrder + 1 : 0 });
     if (result) setPantryItems(prev => [...prev, result]);
   }, [userId, isDemo, configured, pantryItems]);
 
@@ -197,6 +201,16 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
     await updatePantrySortOrders(updates);
   }, [isDemo, configured]);
+
+  // 拖拽到象限：修改食材分类（四象限模式下跨象限拖拽）
+  const setPantryCategory = useCallback(async (id: string, category: PantryCategory) => {
+    if (id.startsWith('virtual-')) return;
+    // 新拖入的食材放在目标象限末尾
+    const maxOrder = Math.max(-1, ...pantryItems
+      .filter(p => p.status === 'active' && p.category === category)
+      .map(p => p.sortOrder ?? 0));
+    await editPantryItem(id, { category, sortOrder: maxOrder + 1 });
+  }, [pantryItems, editPantryItem]);
 
   // ===== 菜谱 CRUD =====
 
@@ -357,6 +371,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     toggleChecked,
     convertToBuyToActive,
     reorderPantryItems,
+    setPantryCategory,
     createRecipe,
     editRecipeTitle,
     removeRecipe,
