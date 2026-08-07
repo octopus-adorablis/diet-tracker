@@ -119,6 +119,7 @@ function App() {
               pantryItems={pantryCooking.pantryItems}
               getPantryUsage={pantryCooking.getPantryUsage}
               onCreatePantryItem={pantryCooking.createPantryItem}
+              onEditPantryItem={pantryCooking.editPantryItem}
               onToggleChecked={pantryCooking.toggleChecked}
               onConvertToBuy={pantryCooking.convertToBuyToActive}
               onDeletePantryItem={pantryCooking.removePantryItem}

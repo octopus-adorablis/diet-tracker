@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef } from 'react';
-import { Plus, Circle, CheckCircle, X, ChefHat, ShoppingCart, ExternalLink, LayoutGrid, List, Beef, Carrot, Wheat, Package } from 'lucide-react';
+import { Plus, Circle, CheckCircle, X, Check, ChefHat, ShoppingCart, ExternalLink, LayoutGrid, List, Beef, Carrot, Wheat, Package } from 'lucide-react';
 import {
   DndContext, closestCenter, pointerWithin, PointerSensor, useSensor, useSensors, useDroppable, DragOverlay,
   type DragEndEvent, type DragStartEvent, type CollisionDetection,
@@ -66,6 +66,7 @@ interface PantryViewProps {
   pantryItems: PantryItem[];
   getPantryUsage: (id: string) => PantryUsage[];
   onCreatePantryItem: (name: string, quantity: string, status: PantryStatus) => Promise<void>;
+  onEditPantryItem: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onToggleChecked: (id: string) => Promise<void>;
   onConvertToBuy: (id: string, quantity: string) => Promise<void>;
   onDeletePantryItem: (id: string) => Promise<void>;
@@ -78,7 +79,7 @@ interface PantryViewProps {
 }
 
 export default function PantryView({
-  pantryItems, getPantryUsage, onCreatePantryItem, onToggleChecked, onConvertToBuy,
+  pantryItems, getPantryUsage, onCreatePantryItem, onEditPantryItem, onToggleChecked, onConvertToBuy,
   onDeletePantryItem, onReorder, onSetCategory, onSetCategoryBatch, onNavigateToRecipe, onNavigateToCooking, onOpenCookingInNewTab,
 }: PantryViewProps) {
   const [newName, setNewName] = useState('');
@@ -378,6 +379,7 @@ export default function PantryView({
                     item={item}
                     usages={getPantryUsage(item.id)}
                     onToggleChecked={onToggleChecked}
+                    onEdit={onEditPantryItem}
                     onDelete={onDeletePantryItem}
                     onNavigateToRecipe={onNavigateToRecipe}
                     selectionMode={false}
@@ -425,6 +427,7 @@ export default function PantryView({
                     selectedIds={selectedIds}
                     getPantryUsage={getPantryUsage}
                     onToggleChecked={onToggleChecked}
+                    onEdit={onEditPantryItem}
                     onDelete={onDeletePantryItem}
                     onNavigateToRecipe={onNavigateToRecipe}
                     onToggleSelect={toggleSelect}
@@ -453,6 +456,7 @@ export default function PantryView({
                 item={item}
                 usages={getPantryUsage(item.id)}
                 onBuyClick={handleBuyClick}
+                onEdit={onEditPantryItem}
                 onDelete={onDeletePantryItem}
                 onNavigateToRecipe={onNavigateToRecipe}
               />
@@ -480,6 +484,7 @@ export default function PantryView({
                   item={item}
                   usages={[]}
                   onToggleChecked={onToggleChecked}
+                  onEdit={onEditPantryItem}
                   onDelete={onDeletePantryItem}
                   onNavigateToRecipe={onNavigateToRecipe}
                 />
@@ -578,7 +583,7 @@ function OverlayCard({ item, count }: { item: PantryItem; count: number }) {
 
 function QuadrantZone({
   category, label, Icon, items, style, isDragging, selectionMode, selectedIds,
-  getPantryUsage, onToggleChecked, onDelete, onNavigateToRecipe, onToggleSelect,
+  getPantryUsage, onToggleChecked, onEdit, onDelete, onNavigateToRecipe, onToggleSelect,
 }: {
   category: PantryCategory;
   label: string;
@@ -590,6 +595,7 @@ function QuadrantZone({
   selectedIds: Set<string>;
   getPantryUsage: (id: string) => PantryUsage[];
   onToggleChecked: (id: string) => void;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
   onToggleSelect: (id: string) => void;
@@ -620,6 +626,7 @@ function QuadrantZone({
                 item={item}
                 usages={getPantryUsage(item.id)}
                 onToggleChecked={onToggleChecked}
+                onEdit={onEdit}
                 onDelete={onDelete}
                 onNavigateToRecipe={onNavigateToRecipe}
                 selectionMode={selectionMode}
@@ -642,12 +649,13 @@ function QuadrantZone({
 // ===== 可拖拽的现有食材卡片 =====
 
 function SortablePantryItemCard({
-  item, usages, onToggleChecked, onDelete, onNavigateToRecipe,
+  item, usages, onToggleChecked, onEdit, onDelete, onNavigateToRecipe,
   selectionMode, isSelected, onToggleSelect,
 }: {
   item: PantryItem;
   usages: PantryUsage[];
   onToggleChecked: (id: string) => void;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
   selectionMode: boolean;
@@ -658,9 +666,32 @@ function SortablePantryItemCard({
     attributes, listeners, setNodeRef, transform, transition, isDragging,
   } = useSortable({ id: item.id });
 
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(item.name);
+  const [editQty, setEditQty] = useState(item.quantity);
+
   const isChecked = item.status === 'checked';
   const usedDisplay = getUsedDisplay(item.usedQuantity);
   const isRemaining = item.quantity.startsWith('剩');
+
+  const handleSaveEdit = async () => {
+    const updates: { name?: string; quantity?: string } = {};
+    if (editName.trim() && editName !== item.name) updates.name = editName.trim();
+    if (editQty.trim() !== item.quantity) updates.quantity = editQty.trim();
+    if (Object.keys(updates).length > 0) {
+      await onEdit(item.id, updates);
+    } else {
+      setEditName(item.name);
+      setEditQty(item.quantity);
+    }
+    setEditing(false);
+  };
+
+  const handleCancelEdit = () => {
+    setEditName(item.name);
+    setEditQty(item.quantity);
+    setEditing(false);
+  };
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -698,23 +729,64 @@ function SortablePantryItemCard({
               {isChecked ? <CheckCircle size={20} className="text-sage-400" /> : <Circle size={20} />}
             </button>
           )}
-          <div className="flex items-baseline gap-2 flex-1 min-w-0">
-            <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
-              {item.name}
-            </span>
-            <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
-              {item.quantity}
-            </span>
-            {usedDisplay.text && (
-              <span className="text-xs text-sage-400 shrink-0">{usedDisplay.text}</span>
-            )}
-            {usedDisplay.insufficient && (
-              <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
-            )}
-          </div>
+          {editing ? (
+            <div className="flex items-center gap-2 flex-1 min-w-0" onPointerDown={e => e.stopPropagation()}>
+              <input
+                type="text"
+                value={editName}
+                onChange={e => setEditName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleSaveEdit();
+                  if (e.key === 'Escape') handleCancelEdit();
+                }}
+                autoFocus
+                className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+              />
+              <input
+                type="text"
+                value={editQty}
+                onChange={e => setEditQty(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleSaveEdit();
+                  if (e.key === 'Escape') handleCancelEdit();
+                }}
+                className="w-20 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+              />
+              <button
+                onClick={handleSaveEdit}
+                className="w-7 h-7 rounded-lg bg-grape-600 text-white flex items-center justify-center shrink-0"
+              >
+                <Check size={14} />
+              </button>
+              <button
+                onClick={handleCancelEdit}
+                className="w-7 h-7 rounded-lg text-sage-400 hover:bg-sage-100 flex items-center justify-center shrink-0"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <div
+              className="flex items-baseline gap-2 flex-1 min-w-0"
+              onDoubleClick={() => !selectionMode && setEditing(true)}
+            >
+              <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
+                {item.name}
+              </span>
+              <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
+                {item.quantity}
+              </span>
+              {usedDisplay.text && (
+                <span className="text-xs text-sage-400 shrink-0">{usedDisplay.text}</span>
+              )}
+              {usedDisplay.insufficient && (
+                <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
+              )}
+            </div>
+          )}
         </div>
         {/* 使用标注 */}
-        {usages.length > 0 && (
+        {usages.length > 0 && !editing && (
           <div className="ml-8 mt-1.5 space-y-1">
             {usages.map((u, i) => (
               <div key={i} className="flex items-center gap-1.5 text-xs">
@@ -740,17 +812,41 @@ function SortablePantryItemCard({
 // ===== 普通食材卡片（已用完区，不可拖拽） =====
 
 function PantryItemCard({
-  item, usages, onToggleChecked, onDelete, onNavigateToRecipe,
+  item, usages, onToggleChecked, onEdit, onDelete, onNavigateToRecipe,
 }: {
   item: PantryItem;
   usages: PantryUsage[];
   onToggleChecked: (id: string) => void;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(item.name);
+  const [editQty, setEditQty] = useState(item.quantity);
+
   const isChecked = item.status === 'checked';
   const usedDisplay = getUsedDisplay(item.usedQuantity);
   const isRemaining = item.quantity.startsWith('剩');
+
+  const handleSaveEdit = async () => {
+    const updates: { name?: string; quantity?: string } = {};
+    if (editName.trim() && editName !== item.name) updates.name = editName.trim();
+    if (editQty.trim() !== item.quantity) updates.quantity = editQty.trim();
+    if (Object.keys(updates).length > 0) {
+      await onEdit(item.id, updates);
+    } else {
+      setEditName(item.name);
+      setEditQty(item.quantity);
+    }
+    setEditing(false);
+  };
+
+  const handleCancelEdit = () => {
+    setEditName(item.name);
+    setEditQty(item.quantity);
+    setEditing(false);
+  };
 
   return (
     <SwipeToDelete onDelete={() => onDelete(item.id)}>
@@ -762,23 +858,64 @@ function PantryItemCard({
           >
             {isChecked ? <CheckCircle size={20} className="text-sage-400" /> : <Circle size={20} />}
           </button>
-          <div className="flex items-baseline gap-2 flex-1 min-w-0">
-            <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
-              {item.name}
-            </span>
-            <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
-              {item.quantity}
-            </span>
-            {usedDisplay.text && (
-              <span className="text-xs text-sage-400 shrink-0">{usedDisplay.text}</span>
-            )}
-            {usedDisplay.insufficient && (
-              <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
-            )}
-          </div>
+          {editing ? (
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <input
+                type="text"
+                value={editName}
+                onChange={e => setEditName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleSaveEdit();
+                  if (e.key === 'Escape') handleCancelEdit();
+                }}
+                autoFocus
+                className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+              />
+              <input
+                type="text"
+                value={editQty}
+                onChange={e => setEditQty(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleSaveEdit();
+                  if (e.key === 'Escape') handleCancelEdit();
+                }}
+                className="w-20 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+              />
+              <button
+                onClick={handleSaveEdit}
+                className="w-7 h-7 rounded-lg bg-grape-600 text-white flex items-center justify-center shrink-0"
+              >
+                <Check size={14} />
+              </button>
+              <button
+                onClick={handleCancelEdit}
+                className="w-7 h-7 rounded-lg text-sage-400 hover:bg-sage-100 flex items-center justify-center shrink-0"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <div
+              className="flex items-baseline gap-2 flex-1 min-w-0"
+              onDoubleClick={() => setEditing(true)}
+            >
+              <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
+                {item.name}
+              </span>
+              <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
+                {item.quantity}
+              </span>
+              {usedDisplay.text && (
+                <span className="text-xs text-sage-400 shrink-0">{usedDisplay.text}</span>
+              )}
+              {usedDisplay.insufficient && (
+                <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
+              )}
+            </div>
+          )}
         </div>
         {/* 使用标注 */}
-        {usages.length > 0 && (
+        {usages.length > 0 && !editing && (
           <div className="ml-8 mt-1.5 space-y-1">
             {usages.map((u, i) => (
               <div key={i} className="flex items-center gap-1.5 text-xs">
@@ -803,25 +940,90 @@ function PantryItemCard({
 // ===== 待买食材卡片 =====
 
 function ToBuyItemCard({
-  item, usages, onBuyClick, onDelete, onNavigateToRecipe,
+  item, usages, onBuyClick, onEdit, onDelete, onNavigateToRecipe,
 }: {
   item: PantryItem;
   usages: PantryUsage[];
   onBuyClick: (item: PantryItem) => void;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(item.name);
+  const [editQty, setEditQty] = useState(item.quantity);
+
+  const handleSaveEdit = async () => {
+    const updates: { name?: string; quantity?: string } = {};
+    if (editName.trim() && editName !== item.name) updates.name = editName.trim();
+    if (editQty.trim() !== item.quantity) updates.quantity = editQty.trim();
+    if (Object.keys(updates).length > 0) {
+      await onEdit(item.id, updates);
+    } else {
+      setEditName(item.name);
+      setEditQty(item.quantity);
+    }
+    setEditing(false);
+  };
+
+  const handleCancelEdit = () => {
+    setEditName(item.name);
+    setEditQty(item.quantity);
+    setEditing(false);
+  };
+
   const card = (
     <div className="bg-red-50 rounded-xl border border-red-100 p-3">
       <div className="flex items-center gap-3">
         <div className="w-3 h-3 rounded-full bg-red-400 shrink-0 ml-0.5" />
-        <div className="flex items-baseline gap-2 flex-1 min-w-0">
-          <span className="text-sm font-medium text-sage-800">{item.name}</span>
-          <span className="text-sm text-sage-500">{item.quantity}</span>
-          {item.isVirtual && (
-            <span className="text-[10px] text-sage-400 bg-sage-100 px-1.5 py-0.5 rounded">自动</span>
-          )}
-        </div>
+        {editing ? (
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <input
+              type="text"
+              value={editName}
+              onChange={e => setEditName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleSaveEdit();
+                if (e.key === 'Escape') handleCancelEdit();
+              }}
+              autoFocus
+              className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+            />
+            <input
+              type="text"
+              value={editQty}
+              onChange={e => setEditQty(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleSaveEdit();
+                if (e.key === 'Escape') handleCancelEdit();
+              }}
+              className="w-20 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+            />
+            <button
+              onClick={handleSaveEdit}
+              className="w-7 h-7 rounded-lg bg-grape-600 text-white flex items-center justify-center shrink-0"
+            >
+              <Check size={14} />
+            </button>
+            <button
+              onClick={handleCancelEdit}
+              className="w-7 h-7 rounded-lg text-sage-400 hover:bg-sage-100 flex items-center justify-center shrink-0"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ) : (
+          <div
+            className="flex items-baseline gap-2 flex-1 min-w-0"
+            onDoubleClick={() => setEditing(true)}
+          >
+            <span className="text-sm font-medium text-sage-800">{item.name}</span>
+            <span className="text-sm text-sage-500">{item.quantity}</span>
+            {item.isVirtual && (
+              <span className="text-[10px] text-sage-400 bg-sage-100 px-1.5 py-0.5 rounded">自动</span>
+            )}
+          </div>
+        )}
         <button
           onClick={() => onBuyClick(item)}
           className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-medium hover:bg-red-700 transition-colors shrink-0"
