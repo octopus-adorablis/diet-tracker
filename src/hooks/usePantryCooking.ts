@@ -452,6 +452,58 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     setRecipes(prev => prev.map(r => r.id === id ? { ...r, active: newActive } : r));
   }, [recipes, pantryItems, recipeItems, editPantryItem, isDemo, configured]);
 
+  // 撤销菜谱完成：回退减法 + 清除消耗记录 + 恢复菜谱为激活状态
+  const undoRecipeCompletion = useCallback(async (id: string) => {
+    const recipe = recipes.find(r => r.id === id);
+    if (!recipe) return;
+
+    // 遍历所有食材，找到有此菜谱消耗记录的
+    for (const item of pantryItems) {
+      const records = parseUsedQuantity(item.usedQuantity);
+      const recipeRecords = records.filter(r => r.r === recipe.title);
+      if (recipeRecords.length === 0) continue;
+
+      // 计算需要加回的数量（仅 subtracted 的记录改过 quantity）
+      let addBack = 0;
+      let unit = '';
+      for (const rec of recipeRecords) {
+        if (rec.subtracted) {
+          const parsed = parseQuantity(rec.q);
+          if (parsed) { addBack += parsed.number; unit = parsed.unit; }
+        }
+      }
+
+      // 移除此菜谱的消耗记录
+      const remaining = records.filter(r => r.r !== recipe.title);
+      const updates: Partial<PantryItem> = {};
+      updates.usedQuantity = remaining.length > 0 ? JSON.stringify(remaining) : undefined;
+
+      // 加回数量
+      if (addBack > 0 && unit) {
+        const currentParsed = parseQuantity(item.quantity);
+        if (currentParsed && currentParsed.unit === unit) {
+          const restored = currentParsed.number + addBack;
+          const formatted = restored % 1 === 0 ? String(restored) : restored.toFixed(2).replace(/\.?0+$/, '');
+          // 还有其他 subtracted 记录 → 保留"剩"前缀；否则去掉
+          const hasOtherSubtracted = remaining.some(r => r.subtracted);
+          updates.quantity = hasOtherSubtracted ? `剩${formatted}${unit}` : `${formatted}${unit}`;
+        }
+      }
+
+      await editPantryItem(item.id, updates);
+    }
+
+    // 恢复菜谱为激活状态
+    if (isDemo || !configured) {
+      const updated = getDemoRecipes().map(r => r.id === id ? { ...r, active: true } : r);
+      saveDemoRecipes(updated);
+      setRecipes(updated);
+      return;
+    }
+    await updateRecipeActive(id, true);
+    setRecipes(prev => prev.map(r => r.id === id ? { ...r, active: true } : r));
+  }, [recipes, pantryItems, editPantryItem, isDemo, configured]);
+
   const removeRecipe = useCallback(async (id: string) => {
     if (isDemo || !configured) {
       saveDemoRecipes(getDemoRecipes().filter(r => r.id !== id));
@@ -613,6 +665,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     createRecipe,
     editRecipeTitle,
     toggleRecipeActive,
+    undoRecipeCompletion,
     removeRecipe,
     reorderRecipes,
     createRecipeItem,

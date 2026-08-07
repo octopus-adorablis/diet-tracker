@@ -136,6 +136,7 @@ function App() {
               onCreateRecipe={pantryCooking.createRecipe}
               onEditRecipeTitle={pantryCooking.editRecipeTitle}
               onToggleActive={pantryCooking.toggleRecipeActive}
+              onUndoCompletion={pantryCooking.undoRecipeCompletion}
               onDeleteRecipe={pantryCooking.removeRecipe}
               onCreateRecipeItem={pantryCooking.createRecipeItem}
               onEditRecipeItem={pantryCooking.editRecipeItem}
