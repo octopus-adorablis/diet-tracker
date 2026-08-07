@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
   closestCenter, type DragStartEvent, type DragEndEvent,
@@ -255,7 +255,13 @@ function RecipeCard({
   const [titleValue, setTitleValue] = useState(recipe.title);
   const [newName, setNewName] = useState('');
   const [newQty, setNewQty] = useState('');
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+  const isActive = recipe.active !== false;
+
+  // 菜谱变为已完成时自动折叠
+  useEffect(() => {
+    if (!isActive) setExpanded(false);
+  }, [isActive]);
 
   const handleSaveTitle = async () => {
     if (titleValue.trim() && titleValue !== recipe.title) {
@@ -274,7 +280,6 @@ function RecipeCard({
   };
 
   const matchedCount = items.filter(i => i.matchStatus === 'matched').length;
-  const isActive = recipe.active !== false;
 
   return (
     <div id={`recipe-${recipe.id}`} className={`bg-white rounded-2xl border overflow-hidden transition-all duration-500 ${isActive ? 'border-sage-100' : 'border-sage-200 opacity-60'}`}>
@@ -310,9 +315,14 @@ function RecipeCard({
           </button>
         )}
         {isActive && (
-          <span className="text-xs text-sage-400 shrink-0" onPointerDown={e => e.stopPropagation()}>
-            {items.length} 种 · {matchedCount} 已有
-          </span>
+          <button
+            onClick={() => setExpanded(e => !e)}
+            onPointerDown={e => e.stopPropagation()}
+            className="flex items-center gap-1 text-xs text-sage-400 hover:text-sage-600 shrink-0 transition-colors"
+          >
+            <span>{items.length} 种 · {matchedCount} 已有</span>
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
         )}
         {!isActive && (
           <button
@@ -348,8 +358,8 @@ function RecipeCard({
         </button>
       </div>
 
-      {/* 食材列表（仅激活时显示，可双击编辑） */}
-      {isActive && items.length > 0 && (
+      {/* 食材列表（仅激活且展开时显示，可双击编辑） */}
+      {isActive && expanded && items.length > 0 && (
         <div className="px-3 py-2 space-y-1">
           {items.map(item => (
             <RecipeItemRow
@@ -363,8 +373,8 @@ function RecipeCard({
         </div>
       )}
 
-      {/* 添加食材栏（仅激活时显示） */}
-      {isActive && (
+      {/* 添加食材栏（仅激活且展开时显示） */}
+      {isActive && expanded && (
         <div className="px-3 pb-3 pt-1 flex items-center gap-2" onPointerDown={e => e.stopPropagation()}>
           <input
             type="text"

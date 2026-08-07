@@ -521,18 +521,12 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
   const reorderRecipes = useCallback(async (activeList: Recipe[], oldIndex: number, newIndex: number) => {
     const reordered = arrayMove(activeList, oldIndex, newIndex);
     const updates = reordered.map((item, idx) => ({ id: item.id, sortOrder: idx }));
-    const orderMap = new Map(updates.map(u => [u.id, u.sortOrder]));
 
-    // 乐观更新内存
-    setRecipes(prev => prev.map(r =>
-      orderMap.has(r.id) ? { ...r, sortOrder: orderMap.get(r.id) } : r
-    ));
+    // 乐观更新内存（用重排后的数组替换，不仅仅是更新 sortOrder 字段）
+    setRecipes(reordered.map((r, idx) => ({ ...r, sortOrder: idx })));
 
     if (isDemo || !configured) {
-      const all = getDemoRecipes().map(r =>
-        orderMap.has(r.id) ? { ...r, sortOrder: orderMap.get(r.id) } : r
-      );
-      saveDemoRecipes(all);
+      saveDemoRecipes(reordered.map((r, idx) => ({ ...r, sortOrder: idx })));
       return;
     }
 
