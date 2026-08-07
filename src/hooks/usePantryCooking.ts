@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { arrayMove } from '@dnd-kit/sortable';
 import {
   getPantryItems, addPantryItem, updatePantryItem, deletePantryItem,
@@ -7,6 +7,10 @@ import {
   updateRecipeSortOrders,
   getRecipeItems, addRecipeItem, updateRecipeItem, deleteRecipeItem,
 } from '../lib/supabase';
+import {
+  parseQuantity, formatRemaining, formatQuantity,
+  addFraction, subtractFraction,
+} from '../lib/quantity';
 import type { PantryItem, Recipe, RecipeItem, PantryUsage, RecipeItemWithMatch, PantryStatus, PantryCategory, ConsumptionRecord } from '../types';
 
 const DEMO_PANTRY_KEY = 'diet_tracker_demo_pantry';
@@ -16,120 +20,6 @@ const DEMO_RECIPE_ITEMS_KEY = 'diet_tracker_demo_recipe_items';
 function isSupabaseConfigured(): boolean {
   const url = import.meta.env.VITE_SUPABASE_URL || '';
   return url !== '' && url !== 'https://placeholder.supabase.co';
-}
-
-// ===== 分数运算工具 =====
-// 辗转相除求最大公约数
-function gcd(a: number, b: number): number {
-  a = Math.abs(a); b = Math.abs(b);
-  while (b) { [a, b] = [b, a % b]; }
-  return a || 1;
-}
-
-// 约分
-function simplifyFraction(num: number, den: number): { num: number; den: number } {
-  if (den === 0) return { num, den: 1 };
-  if (den < 0) { num = -num; den = -den; }
-  const g = gcd(num, den);
-  return { num: num / g, den: den / g };
-}
-
-// 分数加法: a/b + c/d = (ad + cb) / (bd)
-function addFraction(n1: number, d1: number, n2: number, d2: number) {
-  return simplifyFraction(n1 * d2 + n2 * d1, d1 * d2);
-}
-
-// 分数减法: a/b - c/d = (ad - cb) / (bd)
-function subtractFraction(n1: number, d1: number, n2: number, d2: number) {
-  return simplifyFraction(n1 * d2 - n2 * d1, d1 * d2);
-}
-
-// 格式化分数为字符串：整数→"5"，带分数→"1 2/3"，真分数→"2/3"
-function formatFraction(num: number, den: number): string {
-  if (den === 1) return String(num);
-  if (num === 0) return '0';
-  const sign = num < 0 ? '-' : '';
-  const absNum = Math.abs(num);
-  if (absNum > den) {
-    const whole = Math.floor(absNum / den);
-    const rem = absNum % den;
-    return rem === 0 ? `${sign}${whole}` : `${sign}${whole} ${rem}/${den}`;
-  }
-  return `${sign}${absNum}/${den}`;
-}
-
-// 格式化数量（不含"剩"前缀），分数模式保留分数，小数模式保留小数
-function formatQuantity(num: number, den: number, useFraction: boolean): string {
-  if (useFraction && den > 1) return formatFraction(num, den);
-  const f = num / den;
-  return f % 1 === 0 ? String(f) : f.toFixed(2).replace(/\.?0+$/, '');
-}
-
-// ===== 数量解析工具 =====
-// 解析数量文本，保留原始格式信息（分数/小数/中文数字），用于输出时还原
-// "200g"   → { numerator: 200, denominator: 1, unit: "g", isFraction: false, isHalf: false, number: 200 }
-// "1/3根"  → { numerator: 1, denominator: 3, unit: "根", isFraction: true, isHalf: false, number: 0.333 }
-// "半根"   → { numerator: 1, denominator: 2, unit: "根", isFraction: false, isHalf: true, number: 0.5 }
-// "两根"   → { numerator: 2, denominator: 1, unit: "根", isFraction: false, isHalf: false, number: 2 }
-// "剩100g" → 去掉"剩"前缀后解析
-// "少许"   → null
-const CHINESE_NUMBERS: Record<string, number> = {
-  '半': 0.5, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5,
-  '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
-};
-
-function parseQuantity(q: string): {
-  numerator: number; denominator: number; unit: string;
-  isFraction: boolean; isHalf: boolean; number: number;
-} | null {
-  let s = q.trim();
-  if (!s) return null;
-
-  // 去掉"剩"前缀（减法后的剩余量）
-  if (s.startsWith('剩')) s = s.slice(1).trim();
-
-  // 混合分数：1 2/3根、2 1/2根（先于纯分数和小数匹配）
-  let m = s.match(/^(\d+)\s+(\d+)\/(\d+)\s*(.*)$/);
-  if (m) {
-    const whole = parseInt(m[1]);
-    const num = parseInt(m[2]);
-    const den = parseInt(m[3]);
-    if (den === 0) return null;
-    return { numerator: whole * den + num, denominator: den, unit: m[4] || '', isFraction: true, isHalf: false, number: whole + num / den };
-  }
-
-  // 分数：1/3根、2/3根
-  m = s.match(/^(\d+)\/(\d+)\s*(.*)$/);
-  if (m) {
-    const num = parseInt(m[1]);
-    const den = parseInt(m[2]);
-    if (den === 0) return null;
-    return { numerator: num, denominator: den, unit: m[3] || '', isFraction: true, isHalf: false, number: num / den };
-  }
-
-  // 小数/整数：200g、0.5根、100g
-  m = s.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
-  if (m) {
-    const num = parseFloat(m[1]);
-    return { numerator: num, denominator: 1, unit: m[2] || '', isFraction: false, isHalf: false, number: num };
-  }
-
-  // 中文数字：半根、两根、三根、一罐
-  for (const [cn, num] of Object.entries(CHINESE_NUMBERS)) {
-    if (s.startsWith(cn)) {
-      const isHalf = cn === '半';
-      return { numerator: isHalf ? 1 : num, denominator: isHalf ? 2 : 1, unit: s.slice(cn.length).trim() || '', isFraction: false, isHalf, number: num };
-    }
-  }
-
-  return null;
-}
-
-// 格式化剩余量（含"剩"前缀）
-// 分数模式：formatRemaining(2, 3, "根", true) → "剩2/3根"
-// 小数模式：formatRemaining(5, 1, "根", false) → "剩5根"
-function formatRemaining(num: number, den: number, unit: string, useFraction: boolean): string {
-  return `剩${formatQuantity(num, den, useFraction)}${unit}`;
 }
 
 // ===== 食材自动分类 =====
@@ -240,6 +130,10 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
   const [loading, setLoading] = useState(true);
 
   const configured = isSupabaseConfigured();
+
+  // ref 始终指向最新的 pantryItems，防止 toggleRecipeActive 闭包读到过期状态
+  const pantryItemsRef = useRef(pantryItems);
+  pantryItemsRef.current = pantryItems;
 
   // ===== 加载数据 =====
   const fetchAll = useCallback(async () => {
@@ -472,8 +366,10 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
     // 点「完成」时（从激活→关闭），固化已匹配食材的消耗
     if (!newActive) {
+      // 用 ref 读取最新 pantryItems，防止连续完成多个菜谱时闭包过期
+      const latestPantryItems = pantryItemsRef.current;
       const activePantryByName = new Map<string, PantryItem>();
-      for (const p of pantryItems) {
+      for (const p of latestPantryItems) {
         if (p.status === 'active' && !activePantryByName.has(p.name)) {
           activePantryByName.set(p.name, p);
         }
@@ -572,8 +468,10 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     const recipe = recipes.find(r => r.id === id);
     if (!recipe) return;
 
+    // 用 ref 读取最新 pantryItems
+    const latestPantryItems = pantryItemsRef.current;
     // 遍历所有食材，找到有此菜谱消耗记录的
-    for (const item of pantryItems) {
+    for (const item of latestPantryItems) {
       const records = parseUsedQuantity(item.usedQuantity);
       const recipeRecords = records.filter(r => r.r === recipe.title);
       if (recipeRecords.length === 0) continue;

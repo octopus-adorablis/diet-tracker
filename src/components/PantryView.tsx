@@ -10,10 +10,11 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import type { PantryItem, PantryUsage, PantryStatus, PantryCategory } from '../types';
 import SwipeToDelete from './SwipeToDelete';
+import { parseQuantity, addFraction, formatQuantity } from '../lib/quantity';
 
 // 解析 usedQuantity JSON，返回显示信息
 // subtracted=true 的记录已从 quantity 中减去，不重复显示
-// insufficient=true 的记录显示红色"不够了"
+// insufficient=true 的记录不进入"已使用"汇总，仅触发"不够了"提示
 function getUsedDisplay(usedQuantity?: string): { text: string; insufficient: boolean } {
   if (!usedQuantity) return { text: '', insufficient: false };
   try {
@@ -22,25 +23,33 @@ function getUsedDisplay(usedQuantity?: string): { text: string; insufficient: bo
 
     const insufficient = records.some(r => r.insufficient);
 
-    // 只显示未减去的记录
-    const notSubtracted = records.filter(r => !r.subtracted);
+    // 只显示未减去且非不够的记录（单位不匹配的记录）
+    const notSubtracted = records.filter(r => !r.subtracted && !r.insufficient);
     if (notSubtracted.length === 0) return { text: '', insufficient };
 
-    const byUnit = new Map<string, number>();
+    // 按单位分组，用分数累加
+    const byUnit = new Map<string, { num: number; den: number; useFraction: boolean }>();
     for (const rec of notSubtracted) {
-      const m = rec.q.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
-      if (m) {
-        const num = parseFloat(m[1]);
-        const unit = m[2] || '';
-        byUnit.set(unit, (byUnit.get(unit) || 0) + num);
+      const parsed = parseQuantity(rec.q);
+      if (parsed) {
+        const unit = parsed.unit;
+        const entry = byUnit.get(unit) || { num: 0, den: 1, useFraction: false };
+        const added = addFraction(entry.num, entry.den, parsed.numerator, parsed.denominator);
+        entry.num = added.num;
+        entry.den = added.den;
+        entry.useFraction = entry.useFraction || parsed.isFraction || parsed.isHalf;
+        byUnit.set(unit, entry);
       } else {
-        byUnit.set(rec.q, -1);
+        byUnit.set(rec.q, { num: NaN, den: 1, useFraction: false });
       }
     }
     const parts: string[] = [];
-    for (const [unit, num] of byUnit) {
-      if (num === -1) parts.push(unit);
-      else parts.push(`${num % 1 === 0 ? num : num.toFixed(1)}${unit}`);
+    for (const [unit, entry] of byUnit) {
+      if (isNaN(entry.num)) {
+        parts.push(unit);
+      } else {
+        parts.push(`${formatQuantity(entry.num, entry.den, entry.useFraction)}${unit}`);
+      }
     }
     return { text: parts.length > 0 ? `已使用${parts.join('、')}` : '', insufficient };
   } catch { return { text: '', insufficient: false }; }
