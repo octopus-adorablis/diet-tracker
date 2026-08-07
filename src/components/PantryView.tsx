@@ -200,9 +200,13 @@ export default function PantryView({
 
   const handleAdd = async () => {
     if (!newName.trim()) return;
-    await onCreatePantryItem(newName.trim(), newQty.trim(), 'active');
-    setNewName('');
-    setNewQty('');
+    try {
+      await onCreatePantryItem(newName.trim(), newQty.trim(), 'active');
+      setNewName('');
+      setNewQty('');
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '添加失败，请重试');
+    }
   };
 
   const handleBuyClick = (item: PantryItem) => {

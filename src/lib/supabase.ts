@@ -143,19 +143,38 @@ export async function getPantryItems(userId: string): Promise<PantryItem[]> {
 }
 
 export async function addPantryItem(item: Omit<PantryItem, 'id' | 'createdAt'>): Promise<PantryItem | null> {
-  const { data, error } = await supabase
+  // 先尝试带 original_quantity，如果列不存在则去掉重试
+  let { data, error } = await supabase
     .from('pantry_items')
     .insert({
       user_id: item.userId,
       name: item.name,
       quantity: item.quantity,
-      original_quantity: item.quantity,  // 新建时原始数量=录入数量
+      original_quantity: item.quantity,
       status: item.status,
       category: item.category || 'other',
       sort_order: item.sortOrder ?? 0,
     })
     .select()
     .single();
+
+  // original_quantity 列可能还没添加，去掉后重试
+  if (error && error.message?.includes('original_quantity')) {
+    const retry = await supabase
+      .from('pantry_items')
+      .insert({
+        user_id: item.userId,
+        name: item.name,
+        quantity: item.quantity,
+        status: item.status,
+        category: item.category || 'other',
+        sort_order: item.sortOrder ?? 0,
+      })
+      .select()
+      .single();
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error) {
     console.error('Error adding pantry item:', error);
@@ -186,10 +205,21 @@ export async function updatePantryItem(id: string, updates: Partial<PantryItem>)
   if (updates.category !== undefined) dbUpdates.category = updates.category;
   if (updates.usedQuantity !== undefined) dbUpdates.used_quantity = updates.usedQuantity;
 
-  const { error } = await supabase
+  let { error } = await supabase
     .from('pantry_items')
     .update(dbUpdates)
     .eq('id', id);
+
+  // original_quantity 列可能还没添加，去掉后重试
+  if (error && error.message?.includes('original_quantity')) {
+    const safeUpdates = { ...dbUpdates };
+    delete safeUpdates.original_quantity;
+    const retry = await supabase
+      .from('pantry_items')
+      .update(safeUpdates)
+      .eq('id', id);
+    error = retry.error;
+  }
 
   if (error) {
     console.error('Error updating pantry item:', error);
