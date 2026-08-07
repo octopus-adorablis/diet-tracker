@@ -226,6 +226,7 @@ export async function getRecipes(userId: string): Promise<Recipe[]> {
     .from('recipes')
     .select('*')
     .eq('user_id', userId)
+    .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });
 
   if (error) {
@@ -239,6 +240,7 @@ export async function getRecipes(userId: string): Promise<Recipe[]> {
     title: row.title,
     createdAt: row.created_at,
     active: row.active !== false, // 兜底 true，字段缺失或 null 时视为激活
+    sortOrder: row.sort_order ?? 0,
   }));
 }
 
@@ -248,6 +250,7 @@ export async function addRecipe(recipe: Omit<Recipe, 'id' | 'createdAt'>): Promi
     .insert({
       user_id: recipe.userId,
       title: recipe.title,
+      sort_order: recipe.sortOrder ?? 0,
     })
     .select()
     .single();
@@ -263,6 +266,7 @@ export async function addRecipe(recipe: Omit<Recipe, 'id' | 'createdAt'>): Promi
     title: data.title,
     createdAt: data.created_at,
     active: data.active !== false, // 兜底 true
+    sortOrder: data.sort_order ?? 0,
   };
 }
 
@@ -307,6 +311,16 @@ export async function deleteRecipe(id: string): Promise<boolean> {
   }
 
   return true;
+}
+
+// 批量更新菜谱排序
+export async function updateRecipeSortOrders(updates: { id: string; sortOrder: number }[]): Promise<boolean> {
+  const results = await Promise.all(
+    updates.map(u =>
+      supabase.from('recipes').update({ sort_order: u.sortOrder }).eq('id', u.id)
+    )
+  );
+  return results.every(r => !r.error);
 }
 
 // ===== 菜谱食材 (recipe_items) CRUD =====

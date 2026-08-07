@@ -138,7 +138,9 @@ function App() {
               onToggleActive={pantryCooking.toggleRecipeActive}
               onDeleteRecipe={pantryCooking.removeRecipe}
               onCreateRecipeItem={pantryCooking.createRecipeItem}
+              onEditRecipeItem={pantryCooking.editRecipeItem}
               onDeleteRecipeItem={pantryCooking.removeRecipeItem}
+              onReorderRecipes={pantryCooking.reorderRecipes}
               onNavigateToPantry={() => setCurrentView('pantry')}
             />
           )

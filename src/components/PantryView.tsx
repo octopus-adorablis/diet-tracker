@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef } from 'react';
-import { Plus, Circle, CheckCircle, X, ChefHat, ShoppingCart, Trash2, GripVertical, ExternalLink, LayoutGrid, List, Beef, Carrot, Wheat, Package } from 'lucide-react';
+import { Plus, Circle, CheckCircle, X, ChefHat, ShoppingCart, ExternalLink, LayoutGrid, List, Beef, Carrot, Wheat, Package } from 'lucide-react';
 import {
   DndContext, closestCenter, pointerWithin, PointerSensor, useSensor, useSensors, useDroppable, DragOverlay,
   type DragEndEvent, type DragStartEvent, type CollisionDetection,
@@ -9,15 +9,25 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { PantryItem, PantryUsage, PantryStatus, PantryCategory } from '../types';
+import SwipeToDelete from './SwipeToDelete';
 
-// 解析 usedQuantity JSON，返回"已使用XX"显示文本（按单位分组累加数字）
-function getUsedText(usedQuantity?: string): string {
-  if (!usedQuantity) return '';
+// 解析 usedQuantity JSON，返回显示信息
+// subtracted=true 的记录已从 quantity 中减去，不重复显示
+// insufficient=true 的记录显示红色"不够了"
+function getUsedDisplay(usedQuantity?: string): { text: string; insufficient: boolean } {
+  if (!usedQuantity) return { text: '', insufficient: false };
   try {
-    const records = JSON.parse(usedQuantity) as { r: string; q: string }[];
-    if (records.length === 0) return '';
+    const records = JSON.parse(usedQuantity) as { r: string; q: string; subtracted?: boolean; insufficient?: boolean }[];
+    if (records.length === 0) return { text: '', insufficient: false };
+
+    const insufficient = records.some(r => r.insufficient);
+
+    // 只显示未减去的记录
+    const notSubtracted = records.filter(r => !r.subtracted);
+    if (notSubtracted.length === 0) return { text: '', insufficient };
+
     const byUnit = new Map<string, number>();
-    for (const rec of records) {
+    for (const rec of notSubtracted) {
       const m = rec.q.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
       if (m) {
         const num = parseFloat(m[1]);
@@ -32,8 +42,8 @@ function getUsedText(usedQuantity?: string): string {
       if (num === -1) parts.push(unit);
       else parts.push(`${num % 1 === 0 ? num : num.toFixed(1)}${unit}`);
     }
-    return parts.length > 0 ? `已使用${parts.join('、')}` : '';
-  } catch { return ''; }
+    return { text: parts.length > 0 ? `已使用${parts.join('、')}` : '', insufficient };
+  } catch { return { text: '', insufficient: false }; }
 }
 
 // 四象限配置
@@ -106,14 +116,10 @@ export default function PantryView({
     return map;
   }, [activeItems]);
 
-  // 手柄即点即拖（bypass 延迟），其他位置长按 250ms 激活
+  // 长按 250ms 激活拖拽；手指快速移动（>8px）则取消，让浏览器滚动
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { delay: 250, tolerance: 8 },
-      bypassActivationConstraint: ({ event }) => {
-        const target = (event as PointerEvent).target as HTMLElement | null;
-        return !!target?.closest('[data-pantry-handle]');
-      },
     })
   );
 
@@ -355,7 +361,7 @@ export default function PantryView({
         <div>
           <div className="flex items-center justify-between mb-2 px-1">
             <span className="text-xs font-medium text-sage-500 tracking-wider">现有食材</span>
-            <span className="text-xs text-sage-400">{activeItems.length} 项 · 拖手柄排序</span>
+            <span className="text-xs text-sage-400">{activeItems.length} 项 · 长按拖拽排序</span>
           </div>
           <DndContext
             sensors={sensors}
@@ -553,11 +559,9 @@ export default function PantryView({
 
 function OverlayCard({ item, count }: { item: PantryItem; count: number }) {
   const cat = (item.category || 'other') as PantryCategory;
-  const style = QUADRANT_STYLES[cat];
   return (
     <div className={`bg-white rounded-xl border-2 p-3 shadow-2xl rotate-2 ${cat === 'meat_dairy' ? 'border-terra-300' : cat === 'vegetable' ? 'border-ocean-300' : cat === 'staple' ? 'border-gold-300' : 'border-grape-300'}`}>
       <div className="flex items-center gap-3">
-        <GripVertical size={16} className="shrink-0 text-sage-300" />
         <span className="text-sm font-medium text-sage-800">{item.name}</span>
         <span className="text-sm text-sage-500">{item.quantity}</span>
         {count > 1 && (
@@ -655,6 +659,8 @@ function SortablePantryItemCard({
   } = useSortable({ id: item.id });
 
   const isChecked = item.status === 'checked';
+  const usedDisplay = getUsedDisplay(item.usedQuantity);
+  const isRemaining = item.quantity.startsWith('剩');
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -664,83 +670,70 @@ function SortablePantryItemCard({
   };
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...attributes}
-      onClick={selectionMode ? () => onToggleSelect(item.id) : undefined}
-      className={`bg-white rounded-xl border p-2 sm:p-3 transition-shadow ${
-        isSelected ? 'border-grape-400 bg-grape-50/50 ring-2 ring-grape-200' : 'border-sage-100'
-      } ${isChecked ? 'opacity-50' : ''} ${isDragging ? 'shadow-lg border-grape-300' : ''}`}
-    >
-      <div className="flex items-center gap-2 sm:gap-3">
-        {/* 左侧：选择模式=勾选框，普通模式=勾选用完圆点 */}
-        {selectionMode ? (
-          <button
-            onPointerDown={e => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); onToggleSelect(item.id); }}
-            className="shrink-0 text-sage-300 hover:text-grape-500 transition-colors"
-          >
-            {isSelected ? <CheckCircle size={20} className="text-grape-600" /> : <Circle size={20} />}
-          </button>
-        ) : (
-          <button
-            onPointerDown={e => e.stopPropagation()}
-            onClick={() => onToggleChecked(item.id)}
-            className="shrink-0 text-sage-300 hover:text-sage-500 transition-colors"
-          >
-            {isChecked ? <CheckCircle size={20} className="text-sage-400" /> : <Circle size={20} />}
-          </button>
-        )}
-        {/* 拖拽手柄：即点即拖 */}
-        <span
-          data-pantry-handle
-          {...listeners}
-          className="shrink-0 flex items-center justify-center w-5 h-5 -ml-1 cursor-grab active:cursor-grabbing text-sage-200 hover:text-grape-400 transition-colors touch-none"
-          title="拖动"
-        >
-          <GripVertical size={16} />
-        </span>
-        <div className="flex items-baseline gap-2 flex-1 min-w-0">
-          <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
-            {item.name}
-          </span>
-          <span className={`text-sm ${isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
-            {item.quantity}
-          </span>
-          {getUsedText(item.usedQuantity) && (
-            <span className="text-xs text-sage-400 shrink-0">{getUsedText(item.usedQuantity)}</span>
+    <SwipeToDelete onDelete={() => onDelete(item.id)}>
+      <div
+        ref={setNodeRef}
+        style={style}
+        {...attributes}
+        {...listeners}
+        onClick={selectionMode ? () => onToggleSelect(item.id) : undefined}
+        className={`bg-white rounded-xl border p-2 sm:p-3 transition-shadow ${
+          isSelected ? 'border-grape-400 bg-grape-50/50 ring-2 ring-grape-200' : 'border-sage-100'
+        } ${isChecked ? 'opacity-50' : ''} ${isDragging ? 'shadow-lg border-grape-300' : ''}`}
+      >
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* 左侧：选择模式=勾选框，普通模式=勾选用完圆点 */}
+          {selectionMode ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleSelect(item.id); }}
+              className="shrink-0 text-sage-300 hover:text-grape-500 transition-colors"
+            >
+              {isSelected ? <CheckCircle size={20} className="text-grape-600" /> : <Circle size={20} />}
+            </button>
+          ) : (
+            <button
+              onClick={() => onToggleChecked(item.id)}
+              className="shrink-0 text-sage-300 hover:text-sage-500 transition-colors"
+            >
+              {isChecked ? <CheckCircle size={20} className="text-sage-400" /> : <Circle size={20} />}
+            </button>
           )}
+          <div className="flex items-baseline gap-2 flex-1 min-w-0">
+            <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
+              {item.name}
+            </span>
+            <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
+              {item.quantity}
+            </span>
+            {usedDisplay.text && (
+              <span className="text-xs text-sage-400 shrink-0">{usedDisplay.text}</span>
+            )}
+            {usedDisplay.insufficient && (
+              <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
+            )}
+          </div>
         </div>
-        <button
-          onPointerDown={e => e.stopPropagation()}
-          onClick={() => onDelete(item.id)}
-          className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-sage-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-          title="删除"
-        >
-          <Trash2 size={15} />
-        </button>
+        {/* 使用标注 */}
+        {usages.length > 0 && (
+          <div className="ml-8 mt-1.5 space-y-1">
+            {usages.map((u, i) => (
+              <div key={i} className="flex items-center gap-1.5 text-xs">
+                <span className="w-1.5 h-1.5 rounded-full bg-sage-400 shrink-0" />
+                <span className="text-sage-600">已使用 {u.recipeItemQuantity}</span>
+                <span className="text-sage-400">→</span>
+                <button
+                  onPointerDown={e => e.stopPropagation()}
+                  onClick={() => onNavigateToRecipe(u.recipeId)}
+                  className="text-grape-600 hover:text-grape-700 hover:underline transition-colors"
+                >
+                  {u.recipeTitle}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-      {/* 使用标注 */}
-      {usages.length > 0 && (
-        <div className="ml-8 mt-1.5 space-y-1">
-          {usages.map((u, i) => (
-            <div key={i} className="flex items-center gap-1.5 text-xs">
-              <span className="w-1.5 h-1.5 rounded-full bg-sage-400 shrink-0" />
-              <span className="text-sage-600">已使用 {u.recipeItemQuantity}</span>
-              <span className="text-sage-400">→</span>
-              <button
-                onPointerDown={e => e.stopPropagation()}
-                onClick={() => onNavigateToRecipe(u.recipeId)}
-                className="text-grape-600 hover:text-grape-700 hover:underline transition-colors"
-              >
-                {u.recipeTitle}
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    </SwipeToDelete>
   );
 }
 
@@ -756,54 +749,54 @@ function PantryItemCard({
   onNavigateToRecipe: (recipeId: string) => void;
 }) {
   const isChecked = item.status === 'checked';
+  const usedDisplay = getUsedDisplay(item.usedQuantity);
+  const isRemaining = item.quantity.startsWith('剩');
 
   return (
-    <div className={`bg-white rounded-xl border border-sage-100 p-3 ${isChecked ? 'opacity-50' : ''}`}>
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => onToggleChecked(item.id)}
-          className="shrink-0 text-sage-300 hover:text-sage-500 transition-colors"
-        >
-          {isChecked ? <CheckCircle size={20} className="text-sage-400" /> : <Circle size={20} />}
-        </button>
-        <div className="flex items-baseline gap-2 flex-1 min-w-0">
-          <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
-            {item.name}
-          </span>
-          <span className={`text-sm ${isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
-            {item.quantity}
-          </span>
-          {getUsedText(item.usedQuantity) && (
-            <span className="text-xs text-sage-400 shrink-0">{getUsedText(item.usedQuantity)}</span>
-          )}
+    <SwipeToDelete onDelete={() => onDelete(item.id)}>
+      <div className={`bg-white rounded-xl border border-sage-100 p-3 ${isChecked ? 'opacity-50' : ''}`}>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => onToggleChecked(item.id)}
+            className="shrink-0 text-sage-300 hover:text-sage-500 transition-colors"
+          >
+            {isChecked ? <CheckCircle size={20} className="text-sage-400" /> : <Circle size={20} />}
+          </button>
+          <div className="flex items-baseline gap-2 flex-1 min-w-0">
+            <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
+              {item.name}
+            </span>
+            <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
+              {item.quantity}
+            </span>
+            {usedDisplay.text && (
+              <span className="text-xs text-sage-400 shrink-0">{usedDisplay.text}</span>
+            )}
+            {usedDisplay.insufficient && (
+              <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
+            )}
+          </div>
         </div>
-        <button
-          onClick={() => onDelete(item.id)}
-          className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-sage-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-          title="删除"
-        >
-          <Trash2 size={15} />
-        </button>
+        {/* 使用标注 */}
+        {usages.length > 0 && (
+          <div className="ml-8 mt-1.5 space-y-1">
+            {usages.map((u, i) => (
+              <div key={i} className="flex items-center gap-1.5 text-xs">
+                <span className="w-1.5 h-1.5 rounded-full bg-sage-400 shrink-0" />
+                <span className="text-sage-600">已使用 {u.recipeItemQuantity}</span>
+                <span className="text-sage-400">→</span>
+                <button
+                  onClick={() => onNavigateToRecipe(u.recipeId)}
+                  className="text-grape-600 hover:text-grape-700 hover:underline transition-colors"
+                >
+                  {u.recipeTitle}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-      {/* 使用标注 */}
-      {usages.length > 0 && (
-        <div className="ml-8 mt-1.5 space-y-1">
-          {usages.map((u, i) => (
-            <div key={i} className="flex items-center gap-1.5 text-xs">
-              <span className="w-1.5 h-1.5 rounded-full bg-sage-400 shrink-0" />
-              <span className="text-sage-600">已使用 {u.recipeItemQuantity}</span>
-              <span className="text-sage-400">→</span>
-              <button
-                onClick={() => onNavigateToRecipe(u.recipeId)}
-                className="text-grape-600 hover:text-grape-700 hover:underline transition-colors"
-              >
-                {u.recipeTitle}
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    </SwipeToDelete>
   );
 }
 
@@ -818,7 +811,7 @@ function ToBuyItemCard({
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
 }) {
-  return (
+  const card = (
     <div className="bg-red-50 rounded-xl border border-red-100 p-3">
       <div className="flex items-center gap-3">
         <div className="w-3 h-3 rounded-full bg-red-400 shrink-0 ml-0.5" />
@@ -829,15 +822,6 @@ function ToBuyItemCard({
             <span className="text-[10px] text-sage-400 bg-sage-100 px-1.5 py-0.5 rounded">自动</span>
           )}
         </div>
-        {!item.isVirtual && (
-          <button
-            onClick={() => onDelete(item.id)}
-            className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-sage-300 hover:text-red-500 hover:bg-red-100 transition-colors"
-            title="删除"
-          >
-            <Trash2 size={15} />
-          </button>
-        )}
         <button
           onClick={() => onBuyClick(item)}
           className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-medium hover:bg-red-700 transition-colors shrink-0"
@@ -865,5 +849,14 @@ function ToBuyItemCard({
         </div>
       )}
     </div>
+  );
+
+  // 虚拟待买项（菜谱自动生成）不可删除，不包 SwipeToDelete
+  if (item.isVirtual) return card;
+
+  return (
+    <SwipeToDelete onDelete={() => onDelete(item.id)}>
+      {card}
+    </SwipeToDelete>
   );
 }

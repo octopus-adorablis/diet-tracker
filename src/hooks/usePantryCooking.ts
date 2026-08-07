@@ -4,6 +4,7 @@ import {
   getPantryItems, addPantryItem, updatePantryItem, deletePantryItem,
   updatePantrySortOrders,
   getRecipes, addRecipe, updateRecipe, updateRecipeActive, deleteRecipe,
+  updateRecipeSortOrders,
   getRecipeItems, addRecipeItem, updateRecipeItem, deleteRecipeItem,
 } from '../lib/supabase';
 import type { PantryItem, Recipe, RecipeItem, PantryUsage, RecipeItemWithMatch, PantryStatus, PantryCategory, ConsumptionRecord } from '../types';
@@ -15,6 +16,58 @@ const DEMO_RECIPE_ITEMS_KEY = 'diet_tracker_demo_recipe_items';
 function isSupabaseConfigured(): boolean {
   const url = import.meta.env.VITE_SUPABASE_URL || '';
   return url !== '' && url !== 'https://placeholder.supabase.co';
+}
+
+// ===== 数量解析工具 =====
+// 解析数量文本为 { number, unit }，支持小数、分数、中文数字
+// "200g" → { number: 200, unit: "g" }
+// "1/3根" → { number: 0.333, unit: "根" }
+// "半根" → { number: 0.5, unit: "根" }
+// "两根" → { number: 2, unit: "根" }
+// "剩100g" → { number: 100, unit: "g" }  (去掉"剩"前缀)
+// "少许" → null
+const CHINESE_NUMBERS: Record<string, number> = {
+  '半': 0.5, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5,
+  '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
+};
+
+function parseQuantity(q: string): { number: number; unit: string } | null {
+  let s = q.trim();
+  if (!s) return null;
+
+  // 去掉"剩"前缀（减法后的剩余量）
+  if (s.startsWith('剩')) s = s.slice(1).trim();
+
+  // 分数：1/3根、2/3根
+  let m = s.match(/^(\d+)\/(\d+)\s*(.*)$/);
+  if (m) {
+    const denom = parseInt(m[2]);
+    if (denom === 0) return null;
+    return { number: parseInt(m[1]) / denom, unit: m[3] || '' };
+  }
+
+  // 小数/整数：200g、0.5根、100g
+  m = s.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
+  if (m) {
+    return { number: parseFloat(m[1]), unit: m[2] || '' };
+  }
+
+  // 中文数字：半根、两根、三根、一罐
+  for (const [cn, num] of Object.entries(CHINESE_NUMBERS)) {
+    if (s.startsWith(cn)) {
+      return { number: num, unit: s.slice(cn.length).trim() || '' };
+    }
+  }
+
+  return null;
+}
+
+// 格式化剩余量：100 + "g" → "剩100g"，0.5 + "根" → "剩0.5根"
+function formatRemaining(num: number, unit: string): string {
+  const formatted = num % 1 === 0
+    ? String(num)
+    : num.toFixed(2).replace(/\.?0+$/, '');
+  return `剩${formatted}${unit}`;
 }
 
 // ===== Demo 模式 localStorage 工具函数 =====
@@ -277,16 +330,18 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
   const createRecipe = useCallback(async (title: string): Promise<Recipe | null> => {
     if (!userId) return null;
     if (isDemo || !configured) {
-      const recipe: Recipe = { id: genId(), userId, title, createdAt: new Date().toISOString(), active: true };
+      const maxOrder = Math.max(0, ...getDemoRecipes().map(r => r.sortOrder ?? 0));
+      const recipe: Recipe = { id: genId(), userId, title, createdAt: new Date().toISOString(), active: true, sortOrder: maxOrder + 1 };
       const updated = [...getDemoRecipes(), recipe];
       saveDemoRecipes(updated);
       setRecipes(updated);
       return recipe;
     }
-    const result = await addRecipe({ userId, title });
+    const maxOrder = Math.max(0, ...recipes.map(r => r.sortOrder ?? 0));
+    const result = await addRecipe({ userId, title, sortOrder: maxOrder + 1 });
     if (result) setRecipes(prev => [...prev, result]);
     return result;
-  }, [userId, isDemo, configured]);
+  }, [userId, isDemo, configured, recipes]);
 
   const editRecipeTitle = useCallback(async (id: string, title: string) => {
     if (isDemo || !configured) {
@@ -300,7 +355,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
   }, [isDemo, configured]);
 
   // 切换菜谱激活/关闭状态
-  // 关闭(点完成)：把已匹配食材的消耗固化为历史记录 → 关闭菜谱
+  // 关闭(点完成)：智能单位减法 + 固化消耗记录 → 关闭菜谱
   // 打开(点再做)：重新激活，不撤销已使用量（历史事实不回退）
   const toggleRecipeActive = useCallback(async (id: string) => {
     const recipe = recipes.find(r => r.id === id);
@@ -316,21 +371,73 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         }
       }
       const itemsOfRecipe = recipeItems.filter(ri => ri.recipeId === id);
-      // 按 pantryItemId 分组，避免同一食材被多条 recipe_item 引用时覆盖
-      const consumptionsByPantry = new Map<string, ConsumptionRecord[]>();
+
+      // 按 pantryItemId 分组，汇总每个食材的消耗
+      const consumptionsByPantry = new Map<string, {
+        pantryItem: PantryItem;
+        records: ConsumptionRecord[];
+        subtractTotal: number;
+        unit: string;
+      }>();
+
       for (const ri of itemsOfRecipe) {
         const matched = activePantryByName.get(ri.name);
         if (!matched || matched.id.startsWith('virtual-')) continue;
-        const list = consumptionsByPantry.get(matched.id) || [];
-        list.push({ r: recipe.title, q: ri.quantity });
-        consumptionsByPantry.set(matched.id, list);
+
+        let entry = consumptionsByPantry.get(matched.id);
+        if (!entry) {
+          entry = { pantryItem: matched, records: [], subtractTotal: 0, unit: '' };
+          consumptionsByPantry.set(matched.id, entry);
+        }
+
+        // 尝试单位减法
+        const pantryParsed = parseQuantity(matched.quantity);
+        const recipeParsed = parseQuantity(ri.quantity);
+        if (pantryParsed && recipeParsed && pantryParsed.unit === recipeParsed.unit) {
+          // 单位一致 → 累加减法
+          entry.subtractTotal += recipeParsed.number;
+          entry.unit = pantryParsed.unit;
+          entry.records.push({ r: recipe.title, q: ri.quantity, subtracted: true });
+        } else {
+          // 单位不一致或无法解析 → 仅记录
+          entry.records.push({ r: recipe.title, q: ri.quantity });
+        }
       }
-      for (const [pantryId, newRecords] of consumptionsByPantry) {
-        const item = pantryItems.find(p => p.id === pantryId);
-        if (!item) continue;
+
+      // 应用减法 + 写入消耗记录
+      for (const [pantryId, entry] of consumptionsByPantry) {
+        const item = entry.pantryItem;
+        const updates: Partial<PantryItem> = {};
+        const records = entry.records;
+
+        if (entry.subtractTotal > 0 && entry.unit) {
+          const pantryParsed = parseQuantity(item.quantity);
+          if (pantryParsed && pantryParsed.unit === entry.unit) {
+            const result = pantryParsed.number - entry.subtractTotal;
+            if (result > 0) {
+              // 正常减法
+              updates.quantity = formatRemaining(result, entry.unit);
+            } else if (result === 0) {
+              // 正好用完
+              updates.quantity = formatRemaining(0, entry.unit);
+            } else {
+              // 不够减：不修改 quantity，标记 records 为 insufficient
+              for (const rec of records) {
+                if (rec.subtracted) {
+                  rec.subtracted = undefined;
+                  rec.insufficient = true;
+                }
+              }
+            }
+          }
+        }
+
+        // 合并历史消耗记录
         const existing = parseUsedQuantity(item.usedQuantity);
-        existing.push(...newRecords);
-        await editPantryItem(pantryId, { usedQuantity: JSON.stringify(existing) });
+        existing.push(...records);
+        updates.usedQuantity = JSON.stringify(existing);
+
+        await editPantryItem(pantryId, updates);
       }
     }
 
@@ -356,6 +463,28 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     await deleteRecipe(id);
     setRecipes(prev => prev.filter(r => r.id !== id));
     setRecipeItems(prev => prev.filter(ri => ri.recipeId !== id));
+  }, [isDemo, configured]);
+
+  // 拖拽排序：重新排列菜谱
+  const reorderRecipes = useCallback(async (activeList: Recipe[], oldIndex: number, newIndex: number) => {
+    const reordered = arrayMove(activeList, oldIndex, newIndex);
+    const updates = reordered.map((item, idx) => ({ id: item.id, sortOrder: idx }));
+    const orderMap = new Map(updates.map(u => [u.id, u.sortOrder]));
+
+    // 乐观更新内存
+    setRecipes(prev => prev.map(r =>
+      orderMap.has(r.id) ? { ...r, sortOrder: orderMap.get(r.id) } : r
+    ));
+
+    if (isDemo || !configured) {
+      const all = getDemoRecipes().map(r =>
+        orderMap.has(r.id) ? { ...r, sortOrder: orderMap.get(r.id) } : r
+      );
+      saveDemoRecipes(all);
+      return;
+    }
+
+    await updateRecipeSortOrders(updates);
   }, [isDemo, configured]);
 
   // ===== 菜谱食材 CRUD =====
@@ -485,6 +614,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     editRecipeTitle,
     toggleRecipeActive,
     removeRecipe,
+    reorderRecipes,
     createRecipeItem,
     editRecipeItem,
     removeRecipeItem,

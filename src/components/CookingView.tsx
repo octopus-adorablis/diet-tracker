@@ -1,6 +1,15 @@
 import { useState } from 'react';
+import {
+  DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
+  closestCenter, type DragStartEvent, type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext, useSortable, verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { Plus, X, ChefHat, ArrowLeft, Check, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
 import type { Recipe, RecipeItemWithMatch } from '../types';
+import SwipeToDelete from './SwipeToDelete';
 
 interface CookingViewProps {
   recipes: Recipe[];
@@ -10,17 +19,27 @@ interface CookingViewProps {
   onToggleActive: (id: string) => Promise<void>;
   onDeleteRecipe: (id: string) => Promise<void>;
   onCreateRecipeItem: (recipeId: string, name: string, quantity: string) => Promise<void>;
+  onEditRecipeItem: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDeleteRecipeItem: (id: string) => Promise<void>;
+  onReorderRecipes: (recipes: Recipe[], oldIndex: number, newIndex: number) => Promise<void>;
   onNavigateToPantry: () => void;
 }
 
 export default function CookingView({
   recipes, getRecipeItemsWithMatch,
   onCreateRecipe, onEditRecipeTitle, onToggleActive, onDeleteRecipe,
-  onCreateRecipeItem, onDeleteRecipeItem, onNavigateToPantry,
+  onCreateRecipeItem, onEditRecipeItem, onDeleteRecipeItem,
+  onReorderRecipes, onNavigateToPantry,
 }: CookingViewProps) {
   const [showNewRecipe, setShowNewRecipe] = useState(false);
   const [newRecipeTitle, setNewRecipeTitle] = useState('');
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { delay: 250, tolerance: 8 },
+    })
+  );
 
   const handleCreateRecipe = async () => {
     if (!newRecipeTitle.trim()) return;
@@ -28,6 +47,22 @@ export default function CookingView({
     setNewRecipeTitle('');
     setShowNewRecipe(false);
   };
+
+  const handleDragStart = (e: DragStartEvent) => {
+    setActiveDragId(e.active.id as string);
+  };
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    setActiveDragId(null);
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const oldIndex = recipes.findIndex(r => r.id === active.id);
+    const newIndex = recipes.findIndex(r => r.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    onReorderRecipes(recipes, oldIndex, newIndex);
+  };
+
+  const activeDragRecipe = activeDragId ? recipes.find(r => r.id === activeDragId) : null;
 
   return (
     <div className="space-y-4">
@@ -42,7 +77,7 @@ export default function CookingView({
           </button>
           <div>
             <h2 className="text-lg font-bold text-sage-800">做菜</h2>
-            <p className="text-xs text-sage-500">记录每道菜的用料 · 自动匹配食材库</p>
+            <p className="text-xs text-sage-500">长按菜谱名称拖拽排序 · 双击食材修改</p>
           </div>
         </div>
       </div>
@@ -85,19 +120,35 @@ export default function CookingView({
         </button>
       )}
 
-      {/* 菜谱卡片列表 */}
-      {recipes.map(recipe => (
-        <RecipeCard
-          key={recipe.id}
-          recipe={recipe}
-          items={getRecipeItemsWithMatch(recipe.id)}
-          onEditTitle={onEditRecipeTitle}
-          onToggleActive={onToggleActive}
-          onDelete={onDeleteRecipe}
-          onAddItem={onCreateRecipeItem}
-          onDeleteItem={onDeleteRecipeItem}
-        />
-      ))}
+      {/* 菜谱卡片列表（可拖拽排序） */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragCancel={() => setActiveDragId(null)}
+      >
+        <SortableContext items={recipes.map(r => r.id)} strategy={verticalListSortingStrategy}>
+          {recipes.map(recipe => (
+            <SortableRecipeCard
+              key={recipe.id}
+              recipe={recipe}
+              items={getRecipeItemsWithMatch(recipe.id)}
+              onEditTitle={onEditRecipeTitle}
+              onToggleActive={onToggleActive}
+              onDelete={onDeleteRecipe}
+              onAddItem={onCreateRecipeItem}
+              onEditItem={onEditRecipeItem}
+              onDeleteItem={onDeleteRecipeItem}
+            />
+          ))}
+        </SortableContext>
+        <DragOverlay>
+          {activeDragRecipe ? (
+            <RecipeCardPreview recipe={activeDragRecipe} itemCount={getRecipeItemsWithMatch(activeDragRecipe.id).length} />
+          ) : null}
+        </DragOverlay>
+      </DndContext>
 
       {/* 空状态 */}
       {recipes.length === 0 && !showNewRecipe && (
@@ -115,7 +166,7 @@ export default function CookingView({
             i
           </div>
           <p className="text-xs text-grape-700">
-            未匹配的食材会自动加入食材库的待购买清单
+            长按菜谱名称可拖拽排序 · 双击食材可修改 · 左滑删除
           </p>
         </div>
       )}
@@ -123,10 +174,26 @@ export default function CookingView({
   );
 }
 
-// ===== 菜谱卡片 =====
+// ===== 拖拽预览卡片 =====
 
-function RecipeCard({
-  recipe, items, onEditTitle, onToggleActive, onDelete, onAddItem, onDeleteItem,
+function RecipeCardPreview({ recipe, itemCount }: { recipe: Recipe; itemCount: number }) {
+  return (
+    <div className="bg-white rounded-2xl border border-grape-300 shadow-lg overflow-hidden">
+      <div className="bg-cream-50 px-4 py-3 flex items-center gap-3">
+        <div className="w-8 h-8 rounded-lg bg-grape-100 flex items-center justify-center shrink-0">
+          <ChefHat size={16} className="text-grape-600" />
+        </div>
+        <span className="flex-1 text-sm font-bold text-sage-800">{recipe.title}</span>
+        <span className="text-xs text-sage-400">{itemCount} 种食材</span>
+      </div>
+    </div>
+  );
+}
+
+// ===== 可排序的菜谱卡片（useSortable + SwipeToDelete） =====
+
+function SortableRecipeCard({
+  recipe, items, onEditTitle, onToggleActive, onDelete, onAddItem, onEditItem, onDeleteItem,
 }: {
   recipe: Recipe;
   items: RecipeItemWithMatch[];
@@ -134,6 +201,49 @@ function RecipeCard({
   onToggleActive: (id: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onAddItem: (recipeId: string, name: string, quantity: string) => Promise<void>;
+  onEditItem: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
+  onDeleteItem: (id: string) => Promise<void>;
+}) {
+  const {
+    attributes, listeners, setNodeRef, transform, transition, isDragging,
+  } = useSortable({ id: recipe.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <SwipeToDelete onDelete={() => onDelete(recipe.id)}>
+        <RecipeCard
+          recipe={recipe}
+          items={items}
+          dragListeners={listeners}
+          onEditTitle={onEditTitle}
+          onToggleActive={onToggleActive}
+          onAddItem={onAddItem}
+          onEditItem={onEditItem}
+          onDeleteItem={onDeleteItem}
+        />
+      </SwipeToDelete>
+    </div>
+  );
+}
+
+// ===== 菜谱卡片内容 =====
+
+function RecipeCard({
+  recipe, items, dragListeners, onEditTitle, onToggleActive, onAddItem, onEditItem, onDeleteItem,
+}: {
+  recipe: Recipe;
+  items: RecipeItemWithMatch[];
+  dragListeners: ReturnType<typeof useSortable>['listeners'];
+  onEditTitle: (id: string, title: string) => Promise<void>;
+  onToggleActive: (id: string) => Promise<void>;
+  onAddItem: (recipeId: string, name: string, quantity: string) => Promise<void>;
+  onEditItem: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDeleteItem: (id: string) => Promise<void>;
 }) {
   const [editingTitle, setEditingTitle] = useState(false);
@@ -163,8 +273,11 @@ function RecipeCard({
 
   return (
     <div id={`recipe-${recipe.id}`} className={`bg-white rounded-2xl border overflow-hidden transition-all duration-500 ${isActive ? 'border-sage-100' : 'border-sage-200 opacity-60'}`}>
-      {/* 卡片头部 */}
-      <div className="bg-cream-50 px-4 py-3 flex items-center gap-3">
+      {/* 卡片头部（拖拽手柄） */}
+      <div
+        className="bg-cream-50 px-4 py-3 flex items-center gap-3 cursor-grab active:cursor-grabbing"
+        {...dragListeners}
+      >
         <div className="w-8 h-8 rounded-lg bg-grape-100 flex items-center justify-center shrink-0">
           <ChefHat size={16} className="text-grape-600" />
         </div>
@@ -178,25 +291,28 @@ function RecipeCard({
               if (e.key === 'Enter') handleSaveTitle();
               if (e.key === 'Escape') { setTitleValue(recipe.title); setEditingTitle(false); }
             }}
+            onPointerDown={e => e.stopPropagation()}
             autoFocus
             className="flex-1 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm font-medium focus:outline-none focus:border-grape-500"
           />
         ) : (
           <button
             onClick={() => setEditingTitle(true)}
+            onPointerDown={e => e.stopPropagation()}
             className="flex-1 text-left text-sm font-bold text-sage-800 hover:text-grape-600 transition-colors"
           >
             {recipe.title}
           </button>
         )}
         {isActive && (
-          <span className="text-xs text-sage-400 shrink-0">
-            {items.length} 种食材 · {matchedCount} 已有
+          <span className="text-xs text-sage-400 shrink-0" onPointerDown={e => e.stopPropagation()}>
+            {items.length} 种 · {matchedCount} 已有
           </span>
         )}
         {!isActive && (
           <button
             onClick={() => setExpanded(e => !e)}
+            onPointerDown={e => e.stopPropagation()}
             className="flex items-center gap-1 text-xs text-sage-400 hover:text-sage-600 shrink-0 transition-colors"
           >
             <span>已结束</span>
@@ -206,6 +322,7 @@ function RecipeCard({
         )}
         <button
           onClick={() => onToggleActive(recipe.id)}
+          onPointerDown={e => e.stopPropagation()}
           title={isActive ? '标记为已完成' : '重新开始这道菜'}
           className={`h-7 px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors shrink-0 ${
             isActive
@@ -216,73 +333,48 @@ function RecipeCard({
           {isActive ? <Check size={15} /> : <RotateCcw size={15} />}
           <span className="hidden sm:inline">{isActive ? '完成' : '再做'}</span>
         </button>
-        <button
-          onClick={() => onDelete(recipe.id)}
-          className="w-7 h-7 rounded-lg text-sage-300 hover:bg-red-50 hover:text-red-500 flex items-center justify-center transition-colors shrink-0"
-        >
-          <X size={16} />
-        </button>
       </div>
 
-      {/* 食材列表（仅激活时显示） */}
+      {/* 食材列表（仅激活时显示，可双击编辑） */}
       {isActive && items.length > 0 && (
         <div className="px-3 py-2 space-y-1">
           {items.map(item => (
-            <div
+            <RecipeItemRow
               key={item.id}
-              className={`flex items-center gap-3 px-2 py-2 rounded-lg ${
-                item.matchStatus === 'to_buy' ? 'bg-red-50' : 'bg-cream-50'
-              }`}
-            >
-              <span className="text-sm text-sage-800 flex-1">{item.name}</span>
-              <span className="text-sm text-sage-500">{item.quantity}</span>
-              {item.matchStatus === 'matched' ? (
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-100 text-xs text-sage-700 shrink-0">
-                  <span className="w-1.5 h-1.5 rounded-full bg-sage-500" />
-                  已有
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-100 text-xs text-red-700 shrink-0">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                  待购买
-                </span>
-              )}
-              <button
-                onClick={() => onDeleteItem(item.id)}
-                className="w-6 h-6 rounded text-sage-300 hover:bg-sage-100 hover:text-sage-500 flex items-center justify-center transition-colors shrink-0"
-              >
-                <X size={14} />
-              </button>
-            </div>
+              item={item}
+              editable
+              onEdit={onEditItem}
+              onDelete={onDeleteItem}
+            />
           ))}
         </div>
       )}
 
       {/* 添加食材栏（仅激活时显示） */}
       {isActive && (
-        <div className="px-3 pb-3 pt-1 flex items-center gap-2">
-        <input
-          type="text"
-          value={newName}
-          onChange={e => setNewName(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleAddItem()}
-          placeholder="食材名称"
-          className="flex-1 min-w-0 px-3 py-1.5 rounded-lg bg-cream-100 border border-sage-100 text-sm focus:outline-none focus:border-grape-400"
-        />
-        <input
-          type="text"
-          value={newQty}
-          onChange={e => setNewQty(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleAddItem()}
-          placeholder="数量"
-          className="w-20 px-3 py-1.5 rounded-lg bg-cream-100 border border-sage-100 text-sm focus:outline-none focus:border-grape-400"
-        />
-        <button
-          onClick={handleAddItem}
-          className="w-8 h-8 rounded-lg bg-grape-600 text-white flex items-center justify-center hover:bg-grape-700 transition-colors shrink-0"
-        >
-          <Plus size={16} />
-        </button>
+        <div className="px-3 pb-3 pt-1 flex items-center gap-2" onPointerDown={e => e.stopPropagation()}>
+          <input
+            type="text"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleAddItem()}
+            placeholder="食材名称"
+            className="flex-1 min-w-0 px-3 py-1.5 rounded-lg bg-cream-100 border border-sage-100 text-sm focus:outline-none focus:border-grape-400"
+          />
+          <input
+            type="text"
+            value={newQty}
+            onChange={e => setNewQty(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleAddItem()}
+            placeholder="数量"
+            className="w-20 px-3 py-1.5 rounded-lg bg-cream-100 border border-sage-100 text-sm focus:outline-none focus:border-grape-400"
+          />
+          <button
+            onClick={handleAddItem}
+            className="w-8 h-8 rounded-lg bg-grape-600 text-white flex items-center justify-center hover:bg-grape-700 transition-colors shrink-0"
+          >
+            <Plus size={16} />
+          </button>
         </div>
       )}
 
@@ -290,26 +382,13 @@ function RecipeCard({
       {!isActive && expanded && items.length > 0 && (
         <div className="px-3 py-2 space-y-1 border-t border-sage-100">
           {items.map(item => (
-            <div
+            <RecipeItemRow
               key={item.id}
-              className={`flex items-center gap-3 px-2 py-2 rounded-lg ${
-                item.matchStatus === 'to_buy' ? 'bg-red-50' : 'bg-cream-50'
-              }`}
-            >
-              <span className="text-sm text-sage-800 flex-1">{item.name}</span>
-              <span className="text-sm text-sage-500">{item.quantity}</span>
-              {item.matchStatus === 'matched' ? (
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-100 text-xs text-sage-700 shrink-0">
-                  <span className="w-1.5 h-1.5 rounded-full bg-sage-500" />
-                  已有
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-100 text-xs text-red-700 shrink-0">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                  待购买
-                </span>
-              )}
-            </div>
+              item={item}
+              editable={false}
+              onEdit={onEditItem}
+              onDelete={onDeleteItem}
+            />
           ))}
         </div>
       )}
@@ -321,5 +400,104 @@ function RecipeCard({
         </div>
       )}
     </div>
+  );
+}
+
+// ===== 菜谱食材行（可双击编辑 + 左滑删除） =====
+
+function RecipeItemRow({
+  item, editable, onEdit, onDelete,
+}: {
+  item: RecipeItemWithMatch;
+  editable: boolean;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(item.name);
+  const [editQty, setEditQty] = useState(item.quantity);
+
+  const handleSaveEdit = async () => {
+    const updates: { name?: string; quantity?: string } = {};
+    if (editName.trim() && editName !== item.name) updates.name = editName.trim();
+    if (editQty.trim() !== item.quantity) updates.quantity = editQty.trim();
+    if (Object.keys(updates).length > 0) {
+      await onEdit(item.id, updates);
+    } else {
+      setEditName(item.name);
+      setEditQty(item.quantity);
+    }
+    setEditing(false);
+  };
+
+  const handleCancelEdit = () => {
+    setEditName(item.name);
+    setEditQty(item.quantity);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-2 px-2 py-2 rounded-lg bg-grape-50">
+        <input
+          type="text"
+          value={editName}
+          onChange={e => setEditName(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') handleSaveEdit();
+            if (e.key === 'Escape') handleCancelEdit();
+          }}
+          autoFocus
+          className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+        />
+        <input
+          type="text"
+          value={editQty}
+          onChange={e => setEditQty(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') handleSaveEdit();
+            if (e.key === 'Escape') handleCancelEdit();
+          }}
+          className="w-20 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+        />
+        <button
+          onClick={handleSaveEdit}
+          className="w-7 h-7 rounded-lg bg-grape-600 text-white flex items-center justify-center shrink-0"
+        >
+          <Check size={14} />
+        </button>
+        <button
+          onClick={handleCancelEdit}
+          className="w-7 h-7 rounded-lg text-sage-400 hover:bg-sage-100 flex items-center justify-center shrink-0"
+        >
+          <X size={14} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <SwipeToDelete onDelete={() => onDelete(item.id)}>
+      <div
+        className={`flex items-center gap-3 px-2 py-2 rounded-lg ${
+          item.matchStatus === 'to_buy' ? 'bg-red-50' : 'bg-cream-50'
+        } ${editable ? 'cursor-pointer' : ''}`}
+        onDoubleClick={editable ? () => setEditing(true) : undefined}
+      >
+        <span className="text-sm text-sage-800 flex-1">{item.name}</span>
+        <span className="text-sm text-sage-500">{item.quantity}</span>
+        {item.matchStatus === 'matched' ? (
+          <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-100 text-xs text-sage-700 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-sage-500" />
+            已有
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-100 text-xs text-red-700 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+            待购买
+          </span>
+        )}
+      </div>
+    </SwipeToDelete>
   );
 }

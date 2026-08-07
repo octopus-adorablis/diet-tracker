@@ -87,6 +87,8 @@ export interface PantryItem {
 export interface ConsumptionRecord {
   r: string; // 菜谱名
   q: string; // 用量
+  subtracted?: boolean;  // true=已从 quantity 中减去（不在"已使用"中重复显示）
+  insufficient?: boolean; // true=不够减（显示红色"不够了"提示）
 }
 
 export interface Recipe {
@@ -95,6 +97,7 @@ export interface Recipe {
   title: string;
   createdAt: string;
   active?: boolean; // 是否激活（true=在做/提示买菜, false=已做完不再提示）
+  sortOrder?: number;
 }
 
 export interface RecipeItem {
