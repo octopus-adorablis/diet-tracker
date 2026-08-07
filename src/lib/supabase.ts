@@ -138,6 +138,7 @@ export async function getPantryItems(userId: string): Promise<PantryItem[]> {
     createdAt: row.created_at,
     sortOrder: row.sort_order ?? 0,
     usedQuantity: row.used_quantity || '',
+    originalQuantity: row.original_quantity || '',
   }));
 }
 
@@ -148,6 +149,7 @@ export async function addPantryItem(item: Omit<PantryItem, 'id' | 'createdAt'>):
       user_id: item.userId,
       name: item.name,
       quantity: item.quantity,
+      original_quantity: item.quantity,  // 新建时原始数量=录入数量
       status: item.status,
       category: item.category || 'other',
       sort_order: item.sortOrder ?? 0,
@@ -170,6 +172,7 @@ export async function addPantryItem(item: Omit<PantryItem, 'id' | 'createdAt'>):
     createdAt: data.created_at,
     sortOrder: data.sort_order ?? 0,
     usedQuantity: data.used_quantity || '',
+    originalQuantity: data.original_quantity || '',
   };
 }
 
@@ -177,6 +180,7 @@ export async function updatePantryItem(id: string, updates: Partial<PantryItem>)
   const dbUpdates: Record<string, unknown> = {};
   if (updates.name !== undefined) dbUpdates.name = updates.name;
   if (updates.quantity !== undefined) dbUpdates.quantity = updates.quantity;
+  if (updates.originalQuantity !== undefined) dbUpdates.original_quantity = updates.originalQuantity;
   if (updates.status !== undefined) dbUpdates.status = updates.status;
   if (updates.sortOrder !== undefined) dbUpdates.sort_order = updates.sortOrder;
   if (updates.category !== undefined) dbUpdates.category = updates.category;

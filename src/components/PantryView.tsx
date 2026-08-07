@@ -8,52 +8,8 @@ import {
   SortableContext, useSortable, verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { PantryItem, PantryUsage, PantryStatus, PantryCategory } from '../types';
+import type { PantryItem, PantryDisplayInfo, PantryUsageInfo, PantryStatus, PantryCategory } from '../types';
 import SwipeToDelete from './SwipeToDelete';
-import { parseQuantity, addFraction, formatQuantity } from '../lib/quantity';
-
-// 解析 usedQuantity JSON，返回显示信息
-// subtracted=true 的记录已从 quantity 中减去，不重复显示
-// insufficient=true 的记录不进入"已使用"汇总，仅触发"不够了"提示
-function getUsedDisplay(usedQuantity?: string): { text: string; insufficient: boolean } {
-  if (!usedQuantity) return { text: '', insufficient: false };
-  try {
-    const records = JSON.parse(usedQuantity) as { r: string; q: string; subtracted?: boolean; insufficient?: boolean }[];
-    if (records.length === 0) return { text: '', insufficient: false };
-
-    const insufficient = records.some(r => r.insufficient);
-
-    // 只显示未减去且非不够的记录（单位不匹配的记录）
-    const notSubtracted = records.filter(r => !r.subtracted && !r.insufficient);
-    if (notSubtracted.length === 0) return { text: '', insufficient };
-
-    // 按单位分组，用分数累加
-    const byUnit = new Map<string, { num: number; den: number; useFraction: boolean }>();
-    for (const rec of notSubtracted) {
-      const parsed = parseQuantity(rec.q);
-      if (parsed) {
-        const unit = parsed.unit;
-        const entry = byUnit.get(unit) || { num: 0, den: 1, useFraction: false };
-        const added = addFraction(entry.num, entry.den, parsed.numerator, parsed.denominator);
-        entry.num = added.num;
-        entry.den = added.den;
-        entry.useFraction = entry.useFraction || parsed.isFraction || parsed.isHalf;
-        byUnit.set(unit, entry);
-      } else {
-        byUnit.set(rec.q, { num: NaN, den: 1, useFraction: false });
-      }
-    }
-    const parts: string[] = [];
-    for (const [unit, entry] of byUnit) {
-      if (isNaN(entry.num)) {
-        parts.push(unit);
-      } else {
-        parts.push(`${formatQuantity(entry.num, entry.den, entry.useFraction)}${unit}`);
-      }
-    }
-    return { text: parts.length > 0 ? `已使用${parts.join('、')}` : '', insufficient };
-  } catch { return { text: '', insufficient: false }; }
-}
 
 // 四象限配置
 const QUADRANTS: { id: PantryCategory; label: string; icon: typeof Beef }[] = [
@@ -73,7 +29,7 @@ const QUADRANT_STYLES: Record<PantryCategory, { dot: string; icon: string; label
 
 interface PantryViewProps {
   pantryItems: PantryItem[];
-  getPantryUsage: (id: string) => PantryUsage[];
+  getPantryDisplay: (id: string) => PantryDisplayInfo;
   onCreatePantryItem: (name: string, quantity: string, status: PantryStatus) => Promise<void>;
   onEditPantryItem: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onToggleChecked: (id: string) => Promise<void>;
@@ -88,7 +44,7 @@ interface PantryViewProps {
 }
 
 export default function PantryView({
-  pantryItems, getPantryUsage, onCreatePantryItem, onEditPantryItem, onToggleChecked, onConvertToBuy,
+  pantryItems, getPantryDisplay, onCreatePantryItem, onEditPantryItem, onToggleChecked, onConvertToBuy,
   onDeletePantryItem, onReorder, onSetCategory, onSetCategoryBatch, onNavigateToRecipe, onNavigateToCooking, onOpenCookingInNewTab,
 }: PantryViewProps) {
   const [newName, setNewName] = useState('');
@@ -386,7 +342,7 @@ export default function PantryView({
                   <SortablePantryItemCard
                     key={item.id}
                     item={item}
-                    usages={getPantryUsage(item.id)}
+                    displayInfo={getPantryDisplay(item.id)}
                     onToggleChecked={onToggleChecked}
                     onEdit={onEditPantryItem}
                     onDelete={onDeletePantryItem}
@@ -434,7 +390,7 @@ export default function PantryView({
                     isDragging={!!activeId}
                     selectionMode={selectionMode}
                     selectedIds={selectedIds}
-                    getPantryUsage={getPantryUsage}
+                    getPantryDisplay={getPantryDisplay}
                     onToggleChecked={onToggleChecked}
                     onEdit={onEditPantryItem}
                     onDelete={onDeletePantryItem}
@@ -463,7 +419,7 @@ export default function PantryView({
               <ToBuyItemCard
                 key={item.id}
                 item={item}
-                usages={getPantryUsage(item.id)}
+                displayInfo={getPantryDisplay(item.id)}
                 onBuyClick={handleBuyClick}
                 onEdit={onEditPantryItem}
                 onDelete={onDeletePantryItem}
@@ -491,7 +447,7 @@ export default function PantryView({
                 <PantryItemCard
                   key={item.id}
                   item={item}
-                  usages={[]}
+                  displayInfo={getPantryDisplay(item.id)}
                   onToggleChecked={onToggleChecked}
                   onEdit={onEditPantryItem}
                   onDelete={onDeletePantryItem}
@@ -592,7 +548,7 @@ function OverlayCard({ item, count }: { item: PantryItem; count: number }) {
 
 function QuadrantZone({
   category, label, Icon, items, style, isDragging, selectionMode, selectedIds,
-  getPantryUsage, onToggleChecked, onEdit, onDelete, onNavigateToRecipe, onToggleSelect,
+  getPantryDisplay, onToggleChecked, onEdit, onDelete, onNavigateToRecipe, onToggleSelect,
 }: {
   category: PantryCategory;
   label: string;
@@ -602,7 +558,7 @@ function QuadrantZone({
   isDragging: boolean;
   selectionMode: boolean;
   selectedIds: Set<string>;
-  getPantryUsage: (id: string) => PantryUsage[];
+  getPantryDisplay: (id: string) => PantryDisplayInfo;
   onToggleChecked: (id: string) => void;
   onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDelete: (id: string) => void;
@@ -633,7 +589,7 @@ function QuadrantZone({
               <SortablePantryItemCard
                 key={item.id}
                 item={item}
-                usages={getPantryUsage(item.id)}
+                displayInfo={getPantryDisplay(item.id)}
                 onToggleChecked={onToggleChecked}
                 onEdit={onEdit}
                 onDelete={onDelete}
@@ -658,11 +614,11 @@ function QuadrantZone({
 // ===== 可拖拽的现有食材卡片 =====
 
 function SortablePantryItemCard({
-  item, usages, onToggleChecked, onEdit, onDelete, onNavigateToRecipe,
+  item, displayInfo, onToggleChecked, onEdit, onDelete, onNavigateToRecipe,
   selectionMode, isSelected, onToggleSelect,
 }: {
   item: PantryItem;
-  usages: PantryUsage[];
+  displayInfo: PantryDisplayInfo;
   onToggleChecked: (id: string) => void;
   onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDelete: (id: string) => void;
@@ -680,8 +636,7 @@ function SortablePantryItemCard({
   const [editQty, setEditQty] = useState(item.quantity);
 
   const isChecked = item.status === 'checked';
-  const usedDisplay = getUsedDisplay(item.usedQuantity);
-  const isRemaining = item.quantity.startsWith('剩');
+  const isRemaining = displayInfo.displayQuantity.startsWith('剩');
 
   const handleSaveEdit = async () => {
     const updates: { name?: string; quantity?: string } = {};
@@ -783,35 +738,17 @@ function SortablePantryItemCard({
                 {item.name}
               </span>
               <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
-                {item.quantity}
+                {displayInfo.displayQuantity}
               </span>
-              {usedDisplay.text && (
-                <span className="text-xs text-sage-400 shrink-0">{usedDisplay.text}</span>
-              )}
-              {usedDisplay.insufficient && (
+              {displayInfo.insufficient && (
                 <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
               )}
             </div>
           )}
         </div>
         {/* 使用标注 */}
-        {usages.length > 0 && !editing && (
-          <div className="ml-8 mt-1.5 space-y-1">
-            {usages.map((u, i) => (
-              <div key={i} className="flex items-center gap-1.5 text-xs">
-                <span className="w-1.5 h-1.5 rounded-full bg-sage-400 shrink-0" />
-                <span className="text-sage-600">已使用 {u.recipeItemQuantity}</span>
-                <span className="text-sage-400">→</span>
-                <button
-                  onPointerDown={e => e.stopPropagation()}
-                  onClick={() => onNavigateToRecipe(u.recipeId)}
-                  className="text-grape-600 hover:text-grape-700 hover:underline transition-colors"
-                >
-                  {u.recipeTitle}
-                </button>
-              </div>
-            ))}
-          </div>
+        {displayInfo.usages.length > 0 && !editing && (
+          <UsageList usages={displayInfo.usages} onNavigateToRecipe={onNavigateToRecipe} />
         )}
       </div>
     </SwipeToDelete>
@@ -821,10 +758,10 @@ function SortablePantryItemCard({
 // ===== 普通食材卡片（已用完区，不可拖拽） =====
 
 function PantryItemCard({
-  item, usages, onToggleChecked, onEdit, onDelete, onNavigateToRecipe,
+  item, displayInfo, onToggleChecked, onEdit, onDelete, onNavigateToRecipe,
 }: {
   item: PantryItem;
-  usages: PantryUsage[];
+  displayInfo: PantryDisplayInfo;
   onToggleChecked: (id: string) => void;
   onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDelete: (id: string) => void;
@@ -835,8 +772,7 @@ function PantryItemCard({
   const [editQty, setEditQty] = useState(item.quantity);
 
   const isChecked = item.status === 'checked';
-  const usedDisplay = getUsedDisplay(item.usedQuantity);
-  const isRemaining = item.quantity.startsWith('剩');
+  const isRemaining = displayInfo.displayQuantity.startsWith('剩');
 
   const handleSaveEdit = async () => {
     const updates: { name?: string; quantity?: string } = {};
@@ -912,34 +848,17 @@ function PantryItemCard({
                 {item.name}
               </span>
               <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
-                {item.quantity}
+                {displayInfo.displayQuantity}
               </span>
-              {usedDisplay.text && (
-                <span className="text-xs text-sage-400 shrink-0">{usedDisplay.text}</span>
-              )}
-              {usedDisplay.insufficient && (
+              {displayInfo.insufficient && (
                 <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
               )}
             </div>
           )}
         </div>
         {/* 使用标注 */}
-        {usages.length > 0 && !editing && (
-          <div className="ml-8 mt-1.5 space-y-1">
-            {usages.map((u, i) => (
-              <div key={i} className="flex items-center gap-1.5 text-xs">
-                <span className="w-1.5 h-1.5 rounded-full bg-sage-400 shrink-0" />
-                <span className="text-sage-600">已使用 {u.recipeItemQuantity}</span>
-                <span className="text-sage-400">→</span>
-                <button
-                  onClick={() => onNavigateToRecipe(u.recipeId)}
-                  className="text-grape-600 hover:text-grape-700 hover:underline transition-colors"
-                >
-                  {u.recipeTitle}
-                </button>
-              </div>
-            ))}
-          </div>
+        {displayInfo.usages.length > 0 && !editing && (
+          <UsageList usages={displayInfo.usages} onNavigateToRecipe={onNavigateToRecipe} />
         )}
       </div>
     </SwipeToDelete>
@@ -949,10 +868,10 @@ function PantryItemCard({
 // ===== 待买食材卡片 =====
 
 function ToBuyItemCard({
-  item, usages, onBuyClick, onEdit, onDelete, onNavigateToRecipe,
+  item, displayInfo, onBuyClick, onEdit, onDelete, onNavigateToRecipe,
 }: {
   item: PantryItem;
-  usages: PantryUsage[];
+  displayInfo: PantryDisplayInfo;
   onBuyClick: (item: PantryItem) => void;
   onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDelete: (id: string) => void;
@@ -1027,7 +946,7 @@ function ToBuyItemCard({
             onDoubleClick={() => setEditing(true)}
           >
             <span className="text-sm font-medium text-sage-800">{item.name}</span>
-            <span className="text-sm text-sage-500">{item.quantity}</span>
+            <span className="text-sm text-sage-500">{displayInfo.displayQuantity}</span>
             {item.isVirtual && (
               <span className="text-[10px] text-sage-400 bg-sage-100 px-1.5 py-0.5 rounded">自动</span>
             )}
@@ -1042,22 +961,8 @@ function ToBuyItemCard({
         </button>
       </div>
       {/* 使用标注 */}
-      {usages.length > 0 && (
-        <div className="ml-8 mt-1.5 space-y-1">
-          {usages.map((u, i) => (
-            <div key={i} className="flex items-center gap-1.5 text-xs">
-              <span className="w-1.5 h-1.5 rounded-full bg-red-300 shrink-0" />
-              <span className="text-sage-600">需要 {u.recipeItemQuantity}</span>
-              <span className="text-sage-400">→</span>
-              <button
-                onClick={() => onNavigateToRecipe(u.recipeId)}
-                className="text-grape-600 hover:text-grape-700 hover:underline transition-colors"
-              >
-                {u.recipeTitle}
-              </button>
-            </div>
-          ))}
-        </div>
+      {displayInfo.usages.length > 0 && (
+        <UsageList usages={displayInfo.usages} onNavigateToRecipe={onNavigateToRecipe} />
       )}
     </div>
   );
@@ -1069,5 +974,42 @@ function ToBuyItemCard({
     <SwipeToDelete onDelete={() => onDelete(item.id)}>
       {card}
     </SwipeToDelete>
+  );
+}
+
+// ===== 使用标注列表（已用/需用，区分扣减状态） =====
+
+function UsageList({ usages, onNavigateToRecipe }: {
+  usages: PantryUsageInfo[];
+  onNavigateToRecipe: (recipeId: string) => void;
+}) {
+  return (
+    <div className="ml-8 mt-1.5 space-y-1">
+      {usages.map((u, i) => (
+        <div key={i} className="flex items-center gap-1.5 text-xs">
+          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+            u.deducted ? 'bg-sage-400' :
+            u.status === 'used' ? 'bg-orange-400' :
+            'bg-ocean-400'
+          }`} />
+          <span className={
+            u.deducted ? 'text-sage-600' :
+            u.status === 'used' ? 'text-orange-600' :
+            'text-ocean-600'
+          }>
+            {u.deducted ? '已用 ' : u.status === 'used' ? '已用 ' : '需用 '}
+            {u.quantity}
+          </span>
+          <span className="text-sage-400">→</span>
+          <button
+            onPointerDown={e => e.stopPropagation()}
+            onClick={() => onNavigateToRecipe(u.recipeId)}
+            className="text-grape-600 hover:text-grape-700 hover:underline transition-colors"
+          >
+            {u.recipeTitle}
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }

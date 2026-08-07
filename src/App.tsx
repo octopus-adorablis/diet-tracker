@@ -117,7 +117,7 @@ function App() {
           ) : currentView === 'pantry' ? (
             <PantryView
               pantryItems={pantryCooking.pantryItems}
-              getPantryUsage={pantryCooking.getPantryUsage}
+              getPantryDisplay={pantryCooking.getPantryDisplay}
               onCreatePantryItem={pantryCooking.createPantryItem}
               onEditPantryItem={pantryCooking.editPantryItem}
               onToggleChecked={pantryCooking.toggleChecked}
@@ -137,7 +137,6 @@ function App() {
               onCreateRecipe={pantryCooking.createRecipe}
               onEditRecipeTitle={pantryCooking.editRecipeTitle}
               onToggleActive={pantryCooking.toggleRecipeActive}
-              onUndoCompletion={pantryCooking.undoRecipeCompletion}
               onDeleteRecipe={pantryCooking.removeRecipe}
               onCreateRecipeItem={pantryCooking.createRecipeItem}
               onEditRecipeItem={pantryCooking.editRecipeItem}

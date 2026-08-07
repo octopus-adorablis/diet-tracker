@@ -74,13 +74,14 @@ export interface PantryItem {
   id: string;
   userId: string;
   name: string;
-  quantity: string;
+  quantity: string;          // 原始数量（用户录入值，永不被代码修改）
   status: PantryStatus;
   category: PantryCategory;
   createdAt: string;
   sortOrder?: number;
   isVirtual?: boolean;
-  usedQuantity?: string; // JSON数组，记录历史消耗 [{"r":"清炒苦瓜","q":"100g"}]
+  usedQuantity?: string;      // 旧字段，已废弃，保留向后兼容
+  originalQuantity?: string; // 原始数量备份（迁移用，= quantity）
 }
 
 // 单条消耗记录
@@ -107,12 +108,20 @@ export interface RecipeItem {
   quantity: string;
 }
 
-// 食材使用记录（实时计算，不存储）
-export interface PantryUsage {
+// 单条菜谱使用信息（实时计算，不存储）
+export interface PantryUsageInfo {
   recipeId: string;
   recipeTitle: string;
-  recipeItemName: string;
-  recipeItemQuantity: string;
+  quantity: string;          // 菜谱中的用量
+  status: 'used' | 'needed'; // used=已完成菜谱(已用掉), needed=活跃菜谱(还没用)
+  deducted: boolean;         // true=已从原始数量中扣减(单位一致且菜谱已完成)
+}
+
+// 食材显示信息（实时计算）
+export interface PantryDisplayInfo {
+  displayQuantity: string;   // 显示数量: "剩2/3根" 或 "2根"(原始)
+  usages: PantryUsageInfo[];  // 所有使用此食材的菜谱列表
+  insufficient: boolean;     // 已完成菜谱总用量 > 原始数量
 }
 
 // 菜谱食材匹配状态（实时计算）

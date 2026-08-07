@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { arrayMove } from '@dnd-kit/sortable';
 import {
   getPantryItems, addPantryItem, updatePantryItem, deletePantryItem,
@@ -11,7 +11,7 @@ import {
   parseQuantity, formatRemaining, formatQuantity,
   addFraction, subtractFraction,
 } from '../lib/quantity';
-import type { PantryItem, Recipe, RecipeItem, PantryUsage, RecipeItemWithMatch, PantryStatus, PantryCategory, ConsumptionRecord } from '../types';
+import type { PantryItem, Recipe, RecipeItem, RecipeItemWithMatch, PantryStatus, PantryCategory, PantryUsageInfo, PantryDisplayInfo } from '../types';
 
 const DEMO_PANTRY_KEY = 'diet_tracker_demo_pantry';
 const DEMO_RECIPES_KEY = 'diet_tracker_demo_recipes';
@@ -84,43 +84,6 @@ function genId() {
   return `demo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// 解析 usedQuantity JSON 字符串为消耗记录数组
-function parseUsedQuantity(s?: string): ConsumptionRecord[] {
-  if (!s) return [];
-  try { return JSON.parse(s) as ConsumptionRecord[]; } catch { return []; }
-}
-
-// 从消耗记录计算累计已使用量（按单位分组累加数字）
-// 如 [{q:"100g"},{q:"80g"}] → "180g"；[{q:"100g"},{q:"2根"}] → "100g、2根"
-function getTotalUsedQuantity(records: ConsumptionRecord[]): string {
-  if (records.length === 0) return '';
-  // 按单位分组，用分数累加
-  const byUnit = new Map<string, { num: number; den: number; useFraction: boolean }>();
-  for (const r of records) {
-    const parsed = parseQuantity(r.q);
-    if (parsed) {
-      const unit = parsed.unit;
-      const entry = byUnit.get(unit) || { num: 0, den: 1, useFraction: false };
-      const added = addFraction(entry.num, entry.den, parsed.numerator, parsed.denominator);
-      entry.num = added.num;
-      entry.den = added.den;
-      entry.useFraction = entry.useFraction || parsed.isFraction || parsed.isHalf;
-      byUnit.set(unit, entry);
-    } else {
-      byUnit.set(r.q, { num: NaN, den: 1, useFraction: false });
-    }
-  }
-  const parts: string[] = [];
-  for (const [unit, entry] of byUnit) {
-    if (isNaN(entry.num)) {
-      parts.push(unit);
-    } else {
-      parts.push(`${formatQuantity(entry.num, entry.den, entry.useFraction)}${unit}`);
-    }
-  }
-  return parts.join('、');
-}
-
 // ===== 主 Hook =====
 
 export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
@@ -131,9 +94,62 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
   const configured = isSupabaseConfigured();
 
-  // ref 始终指向最新的 pantryItems，防止 toggleRecipeActive 闭包读到过期状态
-  const pantryItemsRef = useRef(pantryItems);
-  pantryItemsRef.current = pantryItems;
+  // ===== 懒迁移：为无 originalQuantity 的食材计算并保存原始数量 =====
+  // 旧代码会在"完成"菜谱时修改 quantity（如 "2根" → "剩1根"）
+  // 新代码不再修改 quantity，剩余量由菜谱状态实时计算
+  // 迁移逻辑：如果 quantity 被改过（有 usedQuantity 记录），把扣减量加回去得到原始值
+  const migratePantryItems = useCallback(async (items: PantryItem[]): Promise<PantryItem[]> => {
+    const needMigration = items.filter(p =>
+      !p.isVirtual && !p.originalQuantity && p.usedQuantity
+    );
+    if (needMigration.length === 0) return items;
+
+    const migrated = [...items];
+    for (const item of needMigration) {
+      try {
+        const records = JSON.parse(item.usedQuantity || '[]') as { q: string; subtracted?: boolean }[];
+        const subtractedRecords = records.filter(r => r.subtracted);
+        if (subtractedRecords.length === 0) continue;
+
+        // 把已扣减的量加回去，得到原始数量
+        const currentParsed = parseQuantity(item.quantity);
+        if (!currentParsed) continue;
+
+        let origNum = currentParsed.numerator;
+        let origDen = currentParsed.denominator;
+        let useFraction = currentParsed.isFraction || currentParsed.isHalf;
+
+        for (const rec of subtractedRecords) {
+          const recParsed = parseQuantity(rec.q);
+          if (recParsed && recParsed.unit === currentParsed.unit) {
+            const added = addFraction(origNum, origDen, recParsed.numerator, recParsed.denominator);
+            origNum = added.num;
+            origDen = added.den;
+            useFraction = useFraction || recParsed.isFraction || recParsed.isHalf;
+          }
+        }
+
+        const originalQty = formatQuantity(origNum, origDen, useFraction) + currentParsed.unit;
+
+        // 更新数据库/localStorage
+        if (isDemo || !configured) {
+          const all = getDemoPantry().map(p =>
+            p.id === item.id ? { ...p, quantity: originalQty, originalQuantity: originalQty } : p
+          );
+          saveDemoPantry(all);
+        } else {
+          await updatePantryItem(item.id, { quantity: originalQty, originalQuantity: originalQty });
+        }
+
+        // 更新内存
+        const idx = migrated.findIndex(p => p.id === item.id);
+        if (idx >= 0) {
+          migrated[idx] = { ...migrated[idx], quantity: originalQty, originalQuantity: originalQty };
+        }
+      } catch { /* 跳过解析失败的项 */ }
+    }
+    return migrated;
+  }, [isDemo, configured]);
 
   // ===== 加载数据 =====
   const fetchAll = useCallback(async () => {
@@ -143,7 +159,9 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     }
 
     if (isDemo || !configured) {
-      setPantryItems(getDemoPantry());
+      const demoPantry = getDemoPantry();
+      const migrated = await migratePantryItems(demoPantry);
+      setPantryItems(migrated);
       setRecipes(getDemoRecipes());
       setRecipeItems(getDemoRecipeItems());
       setLoading(false);
@@ -156,11 +174,12 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       getRecipes(userId),
       getRecipeItems(userId),
     ]);
-    setPantryItems(p);
+    const migrated = await migratePantryItems(p);
+    setPantryItems(migrated);
     setRecipes(r);
     setRecipeItems(ri);
     setLoading(false);
-  }, [userId, isDemo, configured]);
+  }, [userId, isDemo, configured, migratePantryItems]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -214,7 +233,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     if (isDemo || !configured) {
       const existing = getDemoPantry();
       const maxOrder = Math.max(0, ...existing.filter(p => p.status === 'active').map(p => p.sortOrder ?? 0));
-      const item: PantryItem = { id: genId(), userId, name, quantity, status, category, createdAt: new Date().toISOString(), sortOrder: status === 'active' ? maxOrder + 1 : 0 };
+      const item: PantryItem = { id: genId(), userId, name, quantity, status, category, createdAt: new Date().toISOString(), sortOrder: status === 'active' ? maxOrder + 1 : 0, originalQuantity: quantity };
       const updated = [...existing, item];
       saveDemoPantry(updated);
       setPantryItems(updated);
@@ -356,103 +375,14 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     setRecipes(prev => prev.map(r => r.id === id ? { ...r, title } : r));
   }, [isDemo, configured]);
 
-  // 切换菜谱激活/关闭状态
-  // 关闭(点完成)：智能单位减法 + 固化消耗记录 → 关闭菜谱
-  // 打开(点再做)：重新激活，不撤销已使用量（历史事实不回退）
+  // 切换菜谱状态（激活 ↔ 已完成）
+  // 新模式：只切换菜谱状态，不修改食材数量
+  // 食材的剩余量由 pantryDisplayMap 实时计算，永远正确
   const toggleRecipeActive = useCallback(async (id: string) => {
     const recipe = recipes.find(r => r.id === id);
     if (!recipe) return;
     const newActive = recipe.active === false;
 
-    // 点「完成」时（从激活→关闭），固化已匹配食材的消耗
-    if (!newActive) {
-      // 用 ref 读取最新 pantryItems，防止连续完成多个菜谱时闭包过期
-      const latestPantryItems = pantryItemsRef.current;
-      const activePantryByName = new Map<string, PantryItem>();
-      for (const p of latestPantryItems) {
-        if (p.status === 'active' && !activePantryByName.has(p.name)) {
-          activePantryByName.set(p.name, p);
-        }
-      }
-      const itemsOfRecipe = recipeItems.filter(ri => ri.recipeId === id);
-
-      // 按 pantryItemId 分组，汇总每个食材的消耗
-      const consumptionsByPantry = new Map<string, {
-        pantryItem: PantryItem;
-        records: ConsumptionRecord[];
-        subtractNum: number;
-        subtractDen: number;
-        unit: string;
-        useFraction: boolean;
-      }>();
-
-      for (const ri of itemsOfRecipe) {
-        const matched = activePantryByName.get(ri.name);
-        if (!matched || matched.id.startsWith('virtual-')) continue;
-
-        let entry = consumptionsByPantry.get(matched.id);
-        if (!entry) {
-          entry = { pantryItem: matched, records: [], subtractNum: 0, subtractDen: 1, unit: '', useFraction: false };
-          consumptionsByPantry.set(matched.id, entry);
-        }
-
-        // 尝试单位减法
-        const pantryParsed = parseQuantity(matched.quantity);
-        const recipeParsed = parseQuantity(ri.quantity);
-        if (pantryParsed && recipeParsed && pantryParsed.unit === recipeParsed.unit) {
-          // 单位一致 → 分数累加减法
-          const added = addFraction(entry.subtractNum, entry.subtractDen, recipeParsed.numerator, recipeParsed.denominator);
-          entry.subtractNum = added.num;
-          entry.subtractDen = added.den;
-          entry.unit = pantryParsed.unit;
-          entry.useFraction = entry.useFraction || recipeParsed.isFraction || recipeParsed.isHalf || pantryParsed.isFraction || pantryParsed.isHalf;
-          entry.records.push({ r: recipe.title, q: ri.quantity, subtracted: true });
-        } else {
-          // 单位不一致或无法解析 → 仅记录
-          entry.records.push({ r: recipe.title, q: ri.quantity });
-        }
-      }
-
-      // 应用减法 + 写入消耗记录
-      for (const [pantryId, entry] of consumptionsByPantry) {
-        const item = entry.pantryItem;
-        const updates: Partial<PantryItem> = {};
-        const records = entry.records;
-
-        if (entry.subtractNum > 0 && entry.unit) {
-          const pantryParsed = parseQuantity(item.quantity);
-          if (pantryParsed && pantryParsed.unit === entry.unit) {
-            // 分数减法
-            const result = subtractFraction(pantryParsed.numerator, pantryParsed.denominator, entry.subtractNum, entry.subtractDen);
-            const useFrac = entry.useFraction || pantryParsed.isFraction || pantryParsed.isHalf;
-            if (result.num > 0) {
-              // 正常减法
-              updates.quantity = formatRemaining(result.num, result.den, entry.unit, useFrac);
-            } else if (result.num === 0) {
-              // 正好用完
-              updates.quantity = formatRemaining(0, 1, entry.unit, useFrac);
-            } else {
-              // 不够减：不修改 quantity，标记 records 为 insufficient
-              for (const rec of records) {
-                if (rec.subtracted) {
-                  rec.subtracted = undefined;
-                  rec.insufficient = true;
-                }
-              }
-            }
-          }
-        }
-
-        // 合并历史消耗记录
-        const existing = parseUsedQuantity(item.usedQuantity);
-        existing.push(...records);
-        updates.usedQuantity = JSON.stringify(existing);
-
-        await editPantryItem(pantryId, updates);
-      }
-    }
-
-    // 切换菜谱状态
     if (isDemo || !configured) {
       const updated = getDemoRecipes().map(r => r.id === id ? { ...r, active: newActive } : r);
       saveDemoRecipes(updated);
@@ -461,70 +391,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     }
     await updateRecipeActive(id, newActive);
     setRecipes(prev => prev.map(r => r.id === id ? { ...r, active: newActive } : r));
-  }, [recipes, pantryItems, recipeItems, editPantryItem, isDemo, configured]);
-
-  // 撤销菜谱完成：回退减法 + 清除消耗记录 + 恢复菜谱为激活状态
-  const undoRecipeCompletion = useCallback(async (id: string) => {
-    const recipe = recipes.find(r => r.id === id);
-    if (!recipe) return;
-
-    // 用 ref 读取最新 pantryItems
-    const latestPantryItems = pantryItemsRef.current;
-    // 遍历所有食材，找到有此菜谱消耗记录的
-    for (const item of latestPantryItems) {
-      const records = parseUsedQuantity(item.usedQuantity);
-      const recipeRecords = records.filter(r => r.r === recipe.title);
-      if (recipeRecords.length === 0) continue;
-
-      // 计算需要加回的数量（仅 subtracted 的记录改过 quantity）
-      let addBackNum = 0;
-      let addBackDen = 1;
-      let unit = '';
-      let useFraction = false;
-      for (const rec of recipeRecords) {
-        if (rec.subtracted) {
-          const parsed = parseQuantity(rec.q);
-          if (parsed) {
-            const added = addFraction(addBackNum, addBackDen, parsed.numerator, parsed.denominator);
-            addBackNum = added.num;
-            addBackDen = added.den;
-            unit = parsed.unit;
-            useFraction = useFraction || parsed.isFraction || parsed.isHalf;
-          }
-        }
-      }
-
-      // 移除此菜谱的消耗记录
-      const remaining = records.filter(r => r.r !== recipe.title);
-      const updates: Partial<PantryItem> = {};
-      updates.usedQuantity = remaining.length > 0 ? JSON.stringify(remaining) : undefined;
-
-      // 加回数量（分数加法）
-      if (addBackNum > 0 && unit) {
-        const currentParsed = parseQuantity(item.quantity);
-        if (currentParsed && currentParsed.unit === unit) {
-          const restored = addFraction(currentParsed.numerator, currentParsed.denominator, addBackNum, addBackDen);
-          const useFrac = useFraction || currentParsed.isFraction || currentParsed.isHalf;
-          const formatted = formatQuantity(restored.num, restored.den, useFrac);
-          // 还有其他 subtracted 记录 → 保留"剩"前缀；否则去掉
-          const hasOtherSubtracted = remaining.some(r => r.subtracted);
-          updates.quantity = hasOtherSubtracted ? `剩${formatted}${unit}` : `${formatted}${unit}`;
-        }
-      }
-
-      await editPantryItem(item.id, updates);
-    }
-
-    // 恢复菜谱为激活状态
-    if (isDemo || !configured) {
-      const updated = getDemoRecipes().map(r => r.id === id ? { ...r, active: true } : r);
-      saveDemoRecipes(updated);
-      setRecipes(updated);
-      return;
-    }
-    await updateRecipeActive(id, true);
-    setRecipes(prev => prev.map(r => r.id === id ? { ...r, active: true } : r));
-  }, [recipes, pantryItems, editPantryItem, isDemo, configured]);
+  }, [recipes, isDemo, configured]);
 
   const removeRecipe = useCallback(async (id: string) => {
     if (isDemo || !configured) {
@@ -591,58 +458,106 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     setRecipeItems(prev => prev.filter(ri => ri.id !== id));
   }, [isDemo, configured]);
 
-  // ===== 实时计算：食材使用记录 =====
-  const pantryUsageMap = useMemo(() => {
-    const map = new Map<string, PantryUsage[]>();
+  // ===== 实时计算：食材显示信息 =====
+  // 根据菜谱状态实时计算每个食材的剩余量和使用记录
+  // 已完成菜谱 + 单位一致 → 从原始数量扣减
+  // 已完成菜谱 + 单位不一致 → 标注"已用"
+  // 活跃菜谱 → 标注"需用"，不扣减
+  const pantryDisplayMap = useMemo(() => {
+    const map = new Map<string, PantryDisplayInfo>();
 
-    const activeSorted = pantryItems
-      .filter(p => p.status === 'active')
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    const toBuySorted = pantryItems
-      .filter(p => p.status === 'to_buy')
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-
-    const firstActiveByName = new Map<string, PantryItem>();
-    for (const p of activeSorted) {
-      if (!firstActiveByName.has(p.name)) firstActiveByName.set(p.name, p);
-    }
-    const firstToBuyByName = new Map<string, PantryItem>();
-    for (const p of toBuySorted) {
-      if (!firstToBuyByName.has(p.name)) firstToBuyByName.set(p.name, p);
-    }
-
-    const firstVirtualByName = new Map<string, PantryItem>();
-    for (const v of virtualToBuyItems) {
-      if (!firstVirtualByName.has(v.name)) firstVirtualByName.set(v.name, v);
-    }
-
-    for (const ri of recipeItems) {
-      const recipe = recipes.find(r => r.id === ri.recipeId);
-      if (!recipe) continue;
-      // 已关闭的菜谱不再参与食材使用计算
-      if (recipe.active === false) continue;
-
-      const usage: PantryUsage = {
-        recipeId: recipe.id,
-        recipeTitle: recipe.title,
-        recipeItemName: ri.name,
-        recipeItemQuantity: ri.quantity,
-      };
-
-      const match = firstActiveByName.get(ri.name) || firstToBuyByName.get(ri.name) || firstVirtualByName.get(ri.name);
-      if (match) {
-        const list = map.get(match.id) || [];
-        list.push(usage);
-        map.set(match.id, list);
+    // 活跃食材按名称索引（取第一个匹配的）
+    const activeByName = new Map<string, PantryItem>();
+    for (const p of allPantryItems) {
+      if (p.status === 'active' && !activeByName.has(p.name)) {
+        activeByName.set(p.name, p);
       }
     }
 
-    return map;
-  }, [pantryItems, recipeItems, recipes, virtualToBuyItems]);
+    for (const item of allPantryItems) {
+      if (item.status === 'checked') continue; // 已用完的跳过
 
-  const getPantryUsage = useCallback((pantryItemId: string): PantryUsage[] => {
-    return pantryUsageMap.get(pantryItemId) || [];
-  }, [pantryUsageMap]);
+      const isToBuy = item.status === 'to_buy';
+      const originalQty = item.quantity;
+      const originalParsed = parseQuantity(originalQty);
+
+      // 找到所有匹配此食材的 recipe_items
+      const matchingRIs = recipeItems.filter(ri => ri.name === item.name);
+
+      const usages: PantryUsageInfo[] = [];
+      let remainingNum = originalParsed?.numerator ?? 0;
+      let remainingDen = originalParsed?.denominator ?? 1;
+      let useFraction = originalParsed?.isFraction || originalParsed?.isHalf || false;
+      const unit = originalParsed?.unit || '';
+      let insufficient = false;
+
+      for (const ri of matchingRIs) {
+        const recipe = recipes.find(r => r.id === ri.recipeId);
+        if (!recipe) continue;
+
+        const isCompleted = recipe.active === false;
+        const recipeParsed = parseQuantity(ri.quantity);
+        const unitsMatch = originalParsed && recipeParsed && originalParsed.unit === recipeParsed.unit;
+
+        if (isCompleted && !isToBuy && unitsMatch) {
+          // 已完成 + 单位一致 + 不是待买 → 扣减
+          const result = subtractFraction(remainingNum, remainingDen, recipeParsed.numerator, recipeParsed.denominator);
+          if (result.num < 0) insufficient = true;
+          remainingNum = result.num;
+          remainingDen = result.den;
+          useFraction = useFraction || recipeParsed.isFraction || recipeParsed.isHalf;
+          usages.push({
+            recipeId: recipe.id,
+            recipeTitle: recipe.title,
+            quantity: ri.quantity,
+            status: 'used',
+            deducted: true,
+          });
+        } else if (isCompleted) {
+          // 已完成但单位不一致（或待买项） → 标注"已用"但不扣减
+          usages.push({
+            recipeId: recipe.id,
+            recipeTitle: recipe.title,
+            quantity: ri.quantity,
+            status: 'used',
+            deducted: false,
+          });
+        } else {
+          // 活跃菜谱 → 标注"需用"
+          usages.push({
+            recipeId: recipe.id,
+            recipeTitle: recipe.title,
+            quantity: ri.quantity,
+            status: 'needed',
+            deducted: false,
+          });
+        }
+      }
+
+      // 计算显示数量
+      const hasDeductions = usages.some(u => u.deducted);
+      let displayQuantity: string;
+      if (hasDeductions && originalParsed) {
+        // 有扣减 → 显示"剩X"
+        if (remainingNum <= 0) {
+          displayQuantity = formatRemaining(0, 1, unit, useFraction);
+        } else {
+          displayQuantity = formatRemaining(remainingNum, remainingDen, unit, useFraction);
+        }
+      } else {
+        // 无扣减 → 显示原始数量
+        displayQuantity = originalQty;
+      }
+
+      map.set(item.id, { displayQuantity, usages, insufficient });
+    }
+
+    return map;
+  }, [allPantryItems, recipeItems, recipes]);
+
+  const getPantryDisplay = useCallback((pantryItemId: string): PantryDisplayInfo => {
+    return pantryDisplayMap.get(pantryItemId) || { displayQuantity: '', usages: [], insufficient: false };
+  }, [pantryDisplayMap]);
 
   // ===== 实时计算：菜谱食材匹配状态 =====
   const recipeItemMatches = useMemo(() => {
@@ -681,13 +596,12 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     createRecipe,
     editRecipeTitle,
     toggleRecipeActive,
-    undoRecipeCompletion,
     removeRecipe,
     reorderRecipes,
     createRecipeItem,
     editRecipeItem,
     removeRecipeItem,
-    getPantryUsage,
+    getPantryDisplay,
     getRecipeItemsWithMatch,
   };
 }
