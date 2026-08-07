@@ -18,56 +18,118 @@ function isSupabaseConfigured(): boolean {
   return url !== '' && url !== 'https://placeholder.supabase.co';
 }
 
+// ===== 分数运算工具 =====
+// 辗转相除求最大公约数
+function gcd(a: number, b: number): number {
+  a = Math.abs(a); b = Math.abs(b);
+  while (b) { [a, b] = [b, a % b]; }
+  return a || 1;
+}
+
+// 约分
+function simplifyFraction(num: number, den: number): { num: number; den: number } {
+  if (den === 0) return { num, den: 1 };
+  if (den < 0) { num = -num; den = -den; }
+  const g = gcd(num, den);
+  return { num: num / g, den: den / g };
+}
+
+// 分数加法: a/b + c/d = (ad + cb) / (bd)
+function addFraction(n1: number, d1: number, n2: number, d2: number) {
+  return simplifyFraction(n1 * d2 + n2 * d1, d1 * d2);
+}
+
+// 分数减法: a/b - c/d = (ad - cb) / (bd)
+function subtractFraction(n1: number, d1: number, n2: number, d2: number) {
+  return simplifyFraction(n1 * d2 - n2 * d1, d1 * d2);
+}
+
+// 格式化分数为字符串：整数→"5"，带分数→"1 2/3"，真分数→"2/3"
+function formatFraction(num: number, den: number): string {
+  if (den === 1) return String(num);
+  if (num === 0) return '0';
+  const sign = num < 0 ? '-' : '';
+  const absNum = Math.abs(num);
+  if (absNum > den) {
+    const whole = Math.floor(absNum / den);
+    const rem = absNum % den;
+    return rem === 0 ? `${sign}${whole}` : `${sign}${whole} ${rem}/${den}`;
+  }
+  return `${sign}${absNum}/${den}`;
+}
+
+// 格式化数量（不含"剩"前缀），分数模式保留分数，小数模式保留小数
+function formatQuantity(num: number, den: number, useFraction: boolean): string {
+  if (useFraction && den > 1) return formatFraction(num, den);
+  const f = num / den;
+  return f % 1 === 0 ? String(f) : f.toFixed(2).replace(/\.?0+$/, '');
+}
+
 // ===== 数量解析工具 =====
-// 解析数量文本为 { number, unit }，支持小数、分数、中文数字
-// "200g" → { number: 200, unit: "g" }
-// "1/3根" → { number: 0.333, unit: "根" }
-// "半根" → { number: 0.5, unit: "根" }
-// "两根" → { number: 2, unit: "根" }
-// "剩100g" → { number: 100, unit: "g" }  (去掉"剩"前缀)
-// "少许" → null
+// 解析数量文本，保留原始格式信息（分数/小数/中文数字），用于输出时还原
+// "200g"   → { numerator: 200, denominator: 1, unit: "g", isFraction: false, isHalf: false, number: 200 }
+// "1/3根"  → { numerator: 1, denominator: 3, unit: "根", isFraction: true, isHalf: false, number: 0.333 }
+// "半根"   → { numerator: 1, denominator: 2, unit: "根", isFraction: false, isHalf: true, number: 0.5 }
+// "两根"   → { numerator: 2, denominator: 1, unit: "根", isFraction: false, isHalf: false, number: 2 }
+// "剩100g" → 去掉"剩"前缀后解析
+// "少许"   → null
 const CHINESE_NUMBERS: Record<string, number> = {
   '半': 0.5, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5,
   '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
 };
 
-function parseQuantity(q: string): { number: number; unit: string } | null {
+function parseQuantity(q: string): {
+  numerator: number; denominator: number; unit: string;
+  isFraction: boolean; isHalf: boolean; number: number;
+} | null {
   let s = q.trim();
   if (!s) return null;
 
   // 去掉"剩"前缀（减法后的剩余量）
   if (s.startsWith('剩')) s = s.slice(1).trim();
 
-  // 分数：1/3根、2/3根
-  let m = s.match(/^(\d+)\/(\d+)\s*(.*)$/);
+  // 混合分数：1 2/3根、2 1/2根（先于纯分数和小数匹配）
+  let m = s.match(/^(\d+)\s+(\d+)\/(\d+)\s*(.*)$/);
   if (m) {
-    const denom = parseInt(m[2]);
-    if (denom === 0) return null;
-    return { number: parseInt(m[1]) / denom, unit: m[3] || '' };
+    const whole = parseInt(m[1]);
+    const num = parseInt(m[2]);
+    const den = parseInt(m[3]);
+    if (den === 0) return null;
+    return { numerator: whole * den + num, denominator: den, unit: m[4] || '', isFraction: true, isHalf: false, number: whole + num / den };
+  }
+
+  // 分数：1/3根、2/3根
+  m = s.match(/^(\d+)\/(\d+)\s*(.*)$/);
+  if (m) {
+    const num = parseInt(m[1]);
+    const den = parseInt(m[2]);
+    if (den === 0) return null;
+    return { numerator: num, denominator: den, unit: m[3] || '', isFraction: true, isHalf: false, number: num / den };
   }
 
   // 小数/整数：200g、0.5根、100g
   m = s.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
   if (m) {
-    return { number: parseFloat(m[1]), unit: m[2] || '' };
+    const num = parseFloat(m[1]);
+    return { numerator: num, denominator: 1, unit: m[2] || '', isFraction: false, isHalf: false, number: num };
   }
 
   // 中文数字：半根、两根、三根、一罐
   for (const [cn, num] of Object.entries(CHINESE_NUMBERS)) {
     if (s.startsWith(cn)) {
-      return { number: num, unit: s.slice(cn.length).trim() || '' };
+      const isHalf = cn === '半';
+      return { numerator: isHalf ? 1 : num, denominator: isHalf ? 2 : 1, unit: s.slice(cn.length).trim() || '', isFraction: false, isHalf, number: num };
     }
   }
 
   return null;
 }
 
-// 格式化剩余量：100 + "g" → "剩100g"，0.5 + "根" → "剩0.5根"
-function formatRemaining(num: number, unit: string): string {
-  const formatted = num % 1 === 0
-    ? String(num)
-    : num.toFixed(2).replace(/\.?0+$/, '');
-  return `剩${formatted}${unit}`;
+// 格式化剩余量（含"剩"前缀）
+// 分数模式：formatRemaining(2, 3, "根", true) → "剩2/3根"
+// 小数模式：formatRemaining(5, 1, "根", false) → "剩5根"
+function formatRemaining(num: number, den: number, unit: string, useFraction: boolean): string {
+  return `剩${formatQuantity(num, den, useFraction)}${unit}`;
 }
 
 // ===== 食材自动分类 =====
@@ -142,21 +204,29 @@ function parseUsedQuantity(s?: string): ConsumptionRecord[] {
 // 如 [{q:"100g"},{q:"80g"}] → "180g"；[{q:"100g"},{q:"2根"}] → "100g、2根"
 function getTotalUsedQuantity(records: ConsumptionRecord[]): string {
   if (records.length === 0) return '';
-  const byUnit = new Map<string, number>();
+  // 按单位分组，用分数累加
+  const byUnit = new Map<string, { num: number; den: number; useFraction: boolean }>();
   for (const r of records) {
-    const m = r.q.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
-    if (m) {
-      const num = parseFloat(m[1]);
-      const unit = m[2] || '';
-      byUnit.set(unit, (byUnit.get(unit) || 0) + num);
+    const parsed = parseQuantity(r.q);
+    if (parsed) {
+      const unit = parsed.unit;
+      const entry = byUnit.get(unit) || { num: 0, den: 1, useFraction: false };
+      const added = addFraction(entry.num, entry.den, parsed.numerator, parsed.denominator);
+      entry.num = added.num;
+      entry.den = added.den;
+      entry.useFraction = entry.useFraction || parsed.isFraction || parsed.isHalf;
+      byUnit.set(unit, entry);
     } else {
-      byUnit.set(r.q, -1);
+      byUnit.set(r.q, { num: NaN, den: 1, useFraction: false });
     }
   }
   const parts: string[] = [];
-  for (const [unit, num] of byUnit) {
-    if (num === -1) parts.push(unit);
-    else parts.push(`${num % 1 === 0 ? num : num.toFixed(1)}${unit}`);
+  for (const [unit, entry] of byUnit) {
+    if (isNaN(entry.num)) {
+      parts.push(unit);
+    } else {
+      parts.push(`${formatQuantity(entry.num, entry.den, entry.useFraction)}${unit}`);
+    }
   }
   return parts.join('、');
 }
@@ -414,8 +484,10 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       const consumptionsByPantry = new Map<string, {
         pantryItem: PantryItem;
         records: ConsumptionRecord[];
-        subtractTotal: number;
+        subtractNum: number;
+        subtractDen: number;
         unit: string;
+        useFraction: boolean;
       }>();
 
       for (const ri of itemsOfRecipe) {
@@ -424,7 +496,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
         let entry = consumptionsByPantry.get(matched.id);
         if (!entry) {
-          entry = { pantryItem: matched, records: [], subtractTotal: 0, unit: '' };
+          entry = { pantryItem: matched, records: [], subtractNum: 0, subtractDen: 1, unit: '', useFraction: false };
           consumptionsByPantry.set(matched.id, entry);
         }
 
@@ -432,9 +504,12 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         const pantryParsed = parseQuantity(matched.quantity);
         const recipeParsed = parseQuantity(ri.quantity);
         if (pantryParsed && recipeParsed && pantryParsed.unit === recipeParsed.unit) {
-          // 单位一致 → 累加减法
-          entry.subtractTotal += recipeParsed.number;
+          // 单位一致 → 分数累加减法
+          const added = addFraction(entry.subtractNum, entry.subtractDen, recipeParsed.numerator, recipeParsed.denominator);
+          entry.subtractNum = added.num;
+          entry.subtractDen = added.den;
           entry.unit = pantryParsed.unit;
+          entry.useFraction = entry.useFraction || recipeParsed.isFraction || recipeParsed.isHalf || pantryParsed.isFraction || pantryParsed.isHalf;
           entry.records.push({ r: recipe.title, q: ri.quantity, subtracted: true });
         } else {
           // 单位不一致或无法解析 → 仅记录
@@ -448,16 +523,18 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         const updates: Partial<PantryItem> = {};
         const records = entry.records;
 
-        if (entry.subtractTotal > 0 && entry.unit) {
+        if (entry.subtractNum > 0 && entry.unit) {
           const pantryParsed = parseQuantity(item.quantity);
           if (pantryParsed && pantryParsed.unit === entry.unit) {
-            const result = pantryParsed.number - entry.subtractTotal;
-            if (result > 0) {
+            // 分数减法
+            const result = subtractFraction(pantryParsed.numerator, pantryParsed.denominator, entry.subtractNum, entry.subtractDen);
+            const useFrac = entry.useFraction || pantryParsed.isFraction || pantryParsed.isHalf;
+            if (result.num > 0) {
               // 正常减法
-              updates.quantity = formatRemaining(result, entry.unit);
-            } else if (result === 0) {
+              updates.quantity = formatRemaining(result.num, result.den, entry.unit, useFrac);
+            } else if (result.num === 0) {
               // 正好用完
-              updates.quantity = formatRemaining(0, entry.unit);
+              updates.quantity = formatRemaining(0, 1, entry.unit, useFrac);
             } else {
               // 不够减：不修改 quantity，标记 records 为 insufficient
               for (const rec of records) {
@@ -502,12 +579,20 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       if (recipeRecords.length === 0) continue;
 
       // 计算需要加回的数量（仅 subtracted 的记录改过 quantity）
-      let addBack = 0;
+      let addBackNum = 0;
+      let addBackDen = 1;
       let unit = '';
+      let useFraction = false;
       for (const rec of recipeRecords) {
         if (rec.subtracted) {
           const parsed = parseQuantity(rec.q);
-          if (parsed) { addBack += parsed.number; unit = parsed.unit; }
+          if (parsed) {
+            const added = addFraction(addBackNum, addBackDen, parsed.numerator, parsed.denominator);
+            addBackNum = added.num;
+            addBackDen = added.den;
+            unit = parsed.unit;
+            useFraction = useFraction || parsed.isFraction || parsed.isHalf;
+          }
         }
       }
 
@@ -516,12 +601,13 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       const updates: Partial<PantryItem> = {};
       updates.usedQuantity = remaining.length > 0 ? JSON.stringify(remaining) : undefined;
 
-      // 加回数量
-      if (addBack > 0 && unit) {
+      // 加回数量（分数加法）
+      if (addBackNum > 0 && unit) {
         const currentParsed = parseQuantity(item.quantity);
         if (currentParsed && currentParsed.unit === unit) {
-          const restored = currentParsed.number + addBack;
-          const formatted = restored % 1 === 0 ? String(restored) : restored.toFixed(2).replace(/\.?0+$/, '');
+          const restored = addFraction(currentParsed.numerator, currentParsed.denominator, addBackNum, addBackDen);
+          const useFrac = useFraction || currentParsed.isFraction || currentParsed.isHalf;
+          const formatted = formatQuantity(restored.num, restored.den, useFrac);
           // 还有其他 subtracted 记录 → 保留"剩"前缀；否则去掉
           const hasOtherSubtracted = remaining.some(r => r.subtracted);
           updates.quantity = hasOtherSubtracted ? `剩${formatted}${unit}` : `${formatted}${unit}`;
