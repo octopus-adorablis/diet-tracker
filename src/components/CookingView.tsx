@@ -347,6 +347,8 @@ function RecipeCard({
           </button>
         )}
         <button
+          onClick={() => onToggleActive(recipe.id)}
+          onPointerDown={e => e.stopPropagation()}
           className={`h-7 px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors shrink-0 ${
             isActive
               ? 'text-sage-400 hover:bg-sage-100 hover:text-sage-600'
