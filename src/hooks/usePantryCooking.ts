@@ -70,6 +70,43 @@ function formatRemaining(num: number, unit: string): string {
   return `剩${formatted}${unit}`;
 }
 
+// ===== 食材自动分类 =====
+// 根据食材名称关键词自动判断分类，按优先级匹配
+const MEAT_DAIRY_KEYWORDS = [
+  // 禽肉
+  '鸡', '鸭', '鹅', '鸽', '鹌鹑',
+  // 红肉
+  '猪', '牛', '羊', '五花肉', '排骨', '里脊', '火腿', '培根', '香肠', '腊肉', '肉', '骨', '肝', '肠', '肚', '血',
+  // 海鲜水产
+  '鱼', '虾', '蟹', '贝', '鱿鱼', '带鱼', '蛤', '牡蛎', '鲍鱼', '海鲜', '扇贝', '龙虾', '蛏', '海参', '墨鱼', '章鱼', '紫菜', '海带', '裙带菜', '昆布', '海苔',
+  // 蛋
+  '蛋',
+  // 乳制品
+  '牛奶', '酸奶', '奶酪', '芝士', '黄油', '奶油', '炼乳', '乳',
+];
+
+const VEGETABLE_KEYWORDS = [
+  // 具体蔬菜名（优先匹配）
+  '苦瓜', '黄瓜', '丝瓜', '冬瓜', '南瓜', '番茄', '西红柿', '土豆', '洋葱', '白菜', '菠菜', '生菜', '油菜', '芹菜', '韭菜', '豆角', '茄子', '青椒', '辣椒', '胡萝卜', '白萝卜', '萝卜', '蘑菇', '香菇', '木耳', '豆腐', '豆芽', '豌豆', '玉米', '菜花', '西兰花', '藕', '莲藕', '香菜', '蒜苗', '空心菜', '秋葵', '芦笋', '莴笋', '山药', '红薯', '紫薯', '蒜薹', '蒜苔', '腐竹', '娃娃菜', '圆白菜', '包菜', '荠菜', '豆苗', '茼蒿', '苋菜', '莴苣',
+  // 蔬菜泛称
+  '菜心', '菜叶', '瓜', '茄', '葱', '蒜', '姜', '笋', '菌', '菇', '藻',
+];
+
+const STAPLE_KEYWORDS = [
+  '大米', '糯米', '小米', '糙米', '燕麦', '荞麦', '藜麦', '面粉', '面条', '挂面', '意面', '面包', '馒头', '包子', '饺子', '馄饨', '饼', '年糕', '米粉', '粉丝', '米饭', '粥', '红豆', '绿豆', '黄豆', '黑豆', '花生', '芝麻', '麻油', '面条', '河粉', '通心粉', '宽粉', '红薯粉', '绿豆粉',
+];
+
+function autoCategorize(name: string): PantryCategory {
+  const lower = name.trim();
+  if (!lower) return 'other';
+
+  // 按优先级匹配：肉蛋奶 → 蔬菜 → 主食 → 其他
+  if (MEAT_DAIRY_KEYWORDS.some(kw => lower.includes(kw))) return 'meat_dairy';
+  if (VEGETABLE_KEYWORDS.some(kw => lower.includes(kw))) return 'vegetable';
+  if (STAPLE_KEYWORDS.some(kw => lower.includes(kw))) return 'staple';
+  return 'other';
+}
+
 // ===== Demo 模式 localStorage 工具函数 =====
 
 function getDemoPantry(): PantryItem[] {
@@ -188,7 +225,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
           name: ri.name,
           quantity: ri.quantity,
           status: 'to_buy' as PantryStatus,
-          category: 'other' as PantryCategory,
+          category: autoCategorize(ri.name),
           createdAt: '',
           isVirtual: true,
         });
@@ -209,17 +246,18 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
   const createPantryItem = useCallback(async (name: string, quantity: string, status: PantryStatus) => {
     if (!userId) return;
+    const category = autoCategorize(name);
     if (isDemo || !configured) {
       const existing = getDemoPantry();
       const maxOrder = Math.max(0, ...existing.filter(p => p.status === 'active').map(p => p.sortOrder ?? 0));
-      const item: PantryItem = { id: genId(), userId, name, quantity, status, category: 'other', createdAt: new Date().toISOString(), sortOrder: status === 'active' ? maxOrder + 1 : 0 };
+      const item: PantryItem = { id: genId(), userId, name, quantity, status, category, createdAt: new Date().toISOString(), sortOrder: status === 'active' ? maxOrder + 1 : 0 };
       const updated = [...existing, item];
       saveDemoPantry(updated);
       setPantryItems(updated);
       return;
     }
     const maxOrder = Math.max(0, ...pantryItems.filter(p => p.status === 'active').map(p => p.sortOrder ?? 0));
-    const result = await addPantryItem({ userId, name, quantity, status, category: 'other', sortOrder: status === 'active' ? maxOrder + 1 : 0 });
+    const result = await addPantryItem({ userId, name, quantity, status, category, sortOrder: status === 'active' ? maxOrder + 1 : 0 });
     if (result) setPantryItems(prev => [...prev, result]);
   }, [userId, isDemo, configured, pantryItems]);
 

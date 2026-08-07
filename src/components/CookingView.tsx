@@ -255,8 +255,8 @@ function RecipeCard({
   const [titleValue, setTitleValue] = useState(recipe.title);
   const [newName, setNewName] = useState('');
   const [newQty, setNewQty] = useState('');
-  const [expanded, setExpanded] = useState(true);
   const isActive = recipe.active !== false;
+  const [expanded, setExpanded] = useState(false);
 
   // 菜谱变为已完成时自动折叠
   useEffect(() => {
