@@ -378,19 +378,21 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
   // 切换菜谱状态（激活 ↔ 已完成）
   // 新模式：只切换菜谱状态，不修改食材数量
   // 食材的剩余量由 pantryDisplayMap 实时计算，永远正确
+  // 完成时记录 completedAt，撤销时清空，用于判断新食材是否应匹配历史已完成菜谱
   const toggleRecipeActive = useCallback(async (id: string) => {
     const recipe = recipes.find(r => r.id === id);
     if (!recipe) return;
     const newActive = recipe.active === false;
+    const newCompletedAt = newActive ? undefined : new Date().toISOString();
 
     if (isDemo || !configured) {
-      const updated = getDemoRecipes().map(r => r.id === id ? { ...r, active: newActive } : r);
+      const updated = getDemoRecipes().map(r => r.id === id ? { ...r, active: newActive, completedAt: newCompletedAt } : r);
       saveDemoRecipes(updated);
       setRecipes(updated);
       return;
     }
-    await updateRecipeActive(id, newActive);
-    setRecipes(prev => prev.map(r => r.id === id ? { ...r, active: newActive } : r));
+    await updateRecipeActive(id, newActive, newCompletedAt);
+    setRecipes(prev => prev.map(r => r.id === id ? { ...r, active: newActive, completedAt: newCompletedAt } : r));
   }, [recipes, isDemo, configured]);
 
   const removeRecipe = useCallback(async (id: string) => {
@@ -496,6 +498,12 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         if (!recipe) continue;
 
         const isCompleted = recipe.active === false;
+        // 时间判断：食材在菜谱完成之后才入库的，跳过
+        // （新买的食材不应匹配历史已完成的菜谱）
+        if (isCompleted && recipe.completedAt && item.createdAt &&
+            new Date(item.createdAt) > new Date(recipe.completedAt)) {
+          continue;
+        }
         const recipeParsed = parseQuantity(ri.quantity);
         const unitsMatch = originalParsed && recipeParsed && originalParsed.unit === recipeParsed.unit;
 

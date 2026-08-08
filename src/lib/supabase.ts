@@ -274,6 +274,7 @@ export async function getRecipes(userId: string): Promise<Recipe[]> {
     title: row.title,
     createdAt: row.created_at,
     active: row.active !== false, // 兜底 true，字段缺失或 null 时视为激活
+    completedAt: row.completed_at || undefined,
     sortOrder: row.sort_order ?? 0,
   }));
 }
@@ -300,15 +301,32 @@ export async function addRecipe(recipe: Omit<Recipe, 'id' | 'createdAt'>): Promi
     title: data.title,
     createdAt: data.created_at,
     active: data.active !== false, // 兜底 true
+    completedAt: data.completed_at || undefined,
     sortOrder: data.sort_order ?? 0,
   };
 }
 
-export async function updateRecipeActive(id: string, active: boolean): Promise<boolean> {
-  const { error } = await supabase
+export async function updateRecipeActive(id: string, active: boolean, completedAt?: string | null): Promise<boolean> {
+  const updates: Record<string, unknown> = { active };
+  if (active === false) {
+    updates.completed_at = completedAt || new Date().toISOString();
+  } else {
+    updates.completed_at = null;
+  }
+
+  let { error } = await supabase
     .from('recipes')
-    .update({ active })
+    .update(updates)
     .eq('id', id);
+
+  // completed_at 列可能不存在，去掉后重试
+  if (error && error.message?.includes('completed_at')) {
+    const retry = await supabase
+      .from('recipes')
+      .update({ active })
+      .eq('id', id);
+    error = retry.error;
+  }
 
   if (error) {
     console.error('Error updating recipe active:', error);

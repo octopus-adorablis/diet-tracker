@@ -98,6 +98,7 @@ export interface Recipe {
   title: string;
   createdAt: string;
   active?: boolean; // 是否激活（true=在做/提示买菜, false=已做完不再提示）
+  completedAt?: string; // 完成时间（active=false 时记录，用于判断新食材是否应匹配此菜谱）
   sortOrder?: number;
 }
 
