@@ -196,24 +196,102 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     const virtualItems: PantryItem[] = [];
     const seenNames = new Set<string>();
 
-    const sorted = [...recipeItems]
-      .filter(ri => activeRecipeIds.has(ri.recipeId))
-      .sort((a, b) => a.name.localeCompare(b.name));
-    for (const ri of sorted) {
-      if (!existingNames.has(ri.name) && !seenNames.has(ri.name)) {
-        seenNames.add(ri.name);
-        virtualItems.push({
-          id: `virtual-${ri.name}`,
-          userId: userId || '',
-          name: ri.name,
-          quantity: ri.quantity,
-          status: 'to_buy' as PantryStatus,
-          category: autoCategorize(ri.name),
-          createdAt: '',
-          isVirtual: true,
+    // 预计算 usedUpNames（与 pantryDisplayMap 逻辑一致）
+    const usedUpNames = new Set<string>();
+    for (const p of pantryItems) {
+      if (p.status === 'checked') usedUpNames.add(p.name);
+    }
+
+    // 按名称分组：活跃菜谱的总需求量
+    const activeDemandMap = new Map<string, { totalNum: number; totalDen: number; unit: string; isFraction: boolean }>();
+    for (const ri of recipeItems) {
+      if (!activeRecipeIds.has(ri.recipeId)) continue;
+      const parsed = parseQuantity(ri.quantity);
+      if (!parsed) continue;
+      const existing = activeDemandMap.get(ri.name);
+      if (existing) {
+        if (existing.unit === parsed.unit) {
+          const added = addFraction(existing.totalNum, existing.totalDen, parsed.numerator, parsed.denominator);
+          existing.totalNum = added.num;
+          existing.totalDen = added.den;
+          existing.isFraction = existing.isFraction || parsed.isFraction || parsed.isHalf;
+        }
+      } else {
+        activeDemandMap.set(ri.name, {
+          totalNum: parsed.numerator,
+          totalDen: parsed.denominator,
+          unit: parsed.unit,
+          isFraction: parsed.isFraction || parsed.isHalf,
         });
       }
     }
+
+    for (const [name, demand] of activeDemandMap) {
+      if (!existingNames.has(name)) {
+        // 食材不存在 → 生成虚拟待买项（总需求量）
+        if (!seenNames.has(name)) {
+          seenNames.add(name);
+          virtualItems.push({
+            id: `virtual-${name}`,
+            userId: userId || '',
+            name,
+            quantity: formatQuantity(demand.totalNum, demand.totalDen, demand.isFraction) + demand.unit,
+            status: 'to_buy' as PantryStatus,
+            category: autoCategorize(name),
+            createdAt: '',
+            isVirtual: true,
+          });
+        }
+      } else {
+        // 食材存在 → 检查数量是否足够
+        const matchingItem = pantryItems.find(p => p.status === 'active' && p.name === name);
+        if (!matchingItem) continue;
+
+        const originalParsed = parseQuantity(matchingItem.quantity);
+        if (!originalParsed || originalParsed.unit !== demand.unit) continue;
+
+        // 计算可用量（原始量 - 已完成菜谱扣减量）
+        let availNum = originalParsed.numerator;
+        let availDen = originalParsed.denominator;
+
+        const matchingRIs = recipeItems.filter(ri => ri.name === name);
+        for (const ri of matchingRIs) {
+          const recipe = recipes.find(r => r.id === ri.recipeId);
+          if (!recipe || recipe.active !== false) continue;
+
+          const isNewBatch = usedUpNames.has(name);
+          const timeSkip = isNewBatch && recipe.completedAt && matchingItem.createdAt &&
+              new Date(matchingItem.createdAt) > new Date(recipe.completedAt);
+          if (timeSkip) continue;
+
+          const recipeParsed = parseQuantity(ri.quantity);
+          if (recipeParsed && originalParsed.unit === recipeParsed.unit) {
+            const result = subtractFraction(availNum, availDen, recipeParsed.numerator, recipeParsed.denominator);
+            availNum = result.num;
+            availDen = result.den;
+          }
+        }
+
+        // 对比活跃菜谱总需求量，计算差额
+        const shortfall = subtractFraction(demand.totalNum, demand.totalDen, availNum, availDen);
+        if (shortfall.num > 0) {
+          if (!seenNames.has(name)) {
+            seenNames.add(name);
+            virtualItems.push({
+              id: `virtual-shortfall-${name}`,
+              userId: userId || '',
+              name,
+              quantity: formatQuantity(shortfall.num, shortfall.den, demand.isFraction) + demand.unit,
+              status: 'to_buy' as PantryStatus,
+              category: autoCategorize(name),
+              createdAt: '',
+              isVirtual: true,
+            });
+          }
+        }
+      }
+    }
+
     return virtualItems;
   }, [pantryItems, recipeItems, recipes, userId]);
 
@@ -497,6 +575,9 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       const usages: PantryUsageInfo[] = [];
       let remainingNum = originalParsed?.numerator ?? 0;
       let remainingDen = originalParsed?.denominator ?? 1;
+      // 活跃菜谱的虚拟扣减量（不影响 displayQuantity，只用于判断够不够）
+      let activeRemainingNum = remainingNum;
+      let activeRemainingDen = remainingDen;
       let useFraction = originalParsed?.isFraction || originalParsed?.isHalf || false;
       const unit = originalParsed?.unit || '';
       let insufficient = false;
@@ -521,6 +602,8 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
           if (result.num < 0) insufficient = true;
           remainingNum = result.num;
           remainingDen = result.den;
+          activeRemainingNum = remainingNum;
+          activeRemainingDen = remainingDen;
           useFraction = useFraction || recipeParsed.isFraction || recipeParsed.isHalf;
           usages.push({
             recipeId: recipe.id,
@@ -538,8 +621,24 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
             status: 'used',
             deducted: false,
           });
+        } else if (!isToBuy && unitsMatch) {
+          // 活跃菜谱 + 单位一致 → 虚拟扣减，判断够不够
+          const result = subtractFraction(activeRemainingNum, activeRemainingDen, recipeParsed.numerator, recipeParsed.denominator);
+          if (result.num >= 0) {
+            // 够用 → 标注"需用"
+            activeRemainingNum = result.num;
+            activeRemainingDen = result.den;
+            usages.push({
+              recipeId: recipe.id,
+              recipeTitle: recipe.title,
+              quantity: ri.quantity,
+              status: 'needed',
+              deducted: false,
+            });
+          }
+          // 不够 → 不标注（会出现在代购买列表中）
         } else {
-          // 活跃菜谱 → 标注"需用"
+          // 活跃菜谱 + 单位不一致（或待买项） → 标注"需用"
           usages.push({
             recipeId: recipe.id,
             recipeTitle: recipe.title,
