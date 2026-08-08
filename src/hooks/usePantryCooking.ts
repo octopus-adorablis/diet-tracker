@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { arrayMove } from '@dnd-kit/sortable';
 import {
   getPantryItems, addPantryItem, updatePantryItem, deletePantryItem,
@@ -93,6 +93,54 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
   const [loading, setLoading] = useState(true);
 
   const configured = isSupabaseConfigured();
+
+  // ===== Undo 系统 =====
+  interface UndoEntry {
+    description: string;
+    action: () => Promise<void>;
+  }
+  const undoStackRef = useRef<UndoEntry[]>([]);
+  const isUndoingRef = useRef(false);
+  const [undoInfo, setUndoInfo] = useState<string | null>(null);
+
+  const pushUndo = useCallback((description: string, action: () => Promise<void>) => {
+    if (isUndoingRef.current) return;
+    undoStackRef.current.push({ description, action });
+    if (undoStackRef.current.length > 15) undoStackRef.current.shift();
+    setUndoInfo(description);
+  }, []);
+
+  const undo = useCallback(async () => {
+    const entry = undoStackRef.current.pop();
+    if (!entry) return;
+    isUndoingRef.current = true;
+    try {
+      await entry.action();
+    } catch (e) {
+      console.error('Undo failed:', e);
+    } finally {
+      isUndoingRef.current = false;
+      const newTop = undoStackRef.current[undoStackRef.current.length - 1];
+      setUndoInfo(newTop ? newTop.description : null);
+    }
+  }, []);
+
+  // 全局 Cmd+Z / Ctrl+Z 监听（输入框中不拦截）
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        const active = document.activeElement;
+        const tag = active?.tagName.toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || (active as HTMLElement)?.isContentEditable) {
+          return;
+        }
+        e.preventDefault();
+        undo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo]);
 
   // ===== 懒迁移：为无 originalQuantity 的食材计算并保存原始数量 =====
   // 旧代码会在"完成"菜谱时修改 quantity（如 "2根" → "剩1根"）
@@ -315,34 +363,76 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       const updated = [...existing, item];
       saveDemoPantry(updated);
       setPantryItems(updated);
+      pushUndo(`添加"${name}"`, async () => {
+        const all = getDemoPantry().filter(p => p.id !== item.id);
+        saveDemoPantry(all);
+        setPantryItems(all);
+      });
       return;
     }
     const maxOrder = Math.max(0, ...pantryItems.filter(p => p.status === 'active').map(p => p.sortOrder ?? 0));
     const result = await addPantryItem({ userId, name, quantity, status, category, sortOrder: status === 'active' ? maxOrder + 1 : 0 });
-    if (result) setPantryItems(prev => [...prev, result]);
-  }, [userId, isDemo, configured, pantryItems]);
+    if (result) {
+      setPantryItems(prev => [...prev, result]);
+      pushUndo(`添加"${name}"`, async () => {
+        await deletePantryItem(result.id);
+        setPantryItems(prev => prev.filter(p => p.id !== result.id));
+      });
+    }
+  }, [userId, isDemo, configured, pantryItems, pushUndo]);
 
   const editPantryItem = useCallback(async (id: string, updates: Partial<PantryItem>) => {
+    const oldItem = pantryItems.find(p => p.id === id);
+    if (!oldItem) return;
+    const oldValues = Object.fromEntries(
+      Object.keys(updates).map(k => [k, (oldItem as unknown as Record<string, unknown>)[k]])
+    ) as Partial<PantryItem>;
     if (isDemo || !configured) {
       const updated = getDemoPantry().map(p => p.id === id ? { ...p, ...updates } : p);
       saveDemoPantry(updated);
       setPantryItems(updated);
+      pushUndo(`编辑"${oldItem.name}"`, async () => {
+        const all = getDemoPantry().map(p => p.id === id ? { ...p, ...oldValues } : p);
+        saveDemoPantry(all);
+        setPantryItems(all);
+      });
       return;
     }
     await updatePantryItem(id, updates);
     setPantryItems(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
-  }, [isDemo, configured]);
+    pushUndo(`编辑"${oldItem.name}"`, async () => {
+      await updatePantryItem(id, oldValues);
+      setPantryItems(prev => prev.map(p => p.id === id ? { ...p, ...oldValues } : p));
+    });
+  }, [pantryItems, isDemo, configured, pushUndo]);
 
   const removePantryItem = useCallback(async (id: string) => {
+    const item = pantryItems.find(p => p.id === id);
+    if (!item) return;
     if (isDemo || !configured) {
       const updated = getDemoPantry().filter(p => p.id !== id);
       saveDemoPantry(updated);
       setPantryItems(updated);
+      pushUndo(`删除"${item.name}"`, async () => {
+        const all = getDemoPantry();
+        if (!all.find(p => p.id === id)) {
+          const restored = [...all, item];
+          saveDemoPantry(restored);
+          setPantryItems(restored);
+        }
+      });
       return;
     }
     await deletePantryItem(id);
     setPantryItems(prev => prev.filter(p => p.id !== id));
-  }, [isDemo, configured]);
+    pushUndo(`删除"${item.name}"`, async () => {
+      const result = await addPantryItem({
+        userId: item.userId, name: item.name, quantity: item.quantity,
+        status: item.status, category: item.category, sortOrder: item.sortOrder ?? 0,
+      });
+      if (result) setPantryItems(prev => [...prev, result]);
+    });
+  }, [pantryItems, isDemo, configured, pushUndo]);
 
   // 勾选/取消勾选食材
   const toggleChecked = useCallback(async (id: string) => {
@@ -370,6 +460,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     const reordered = arrayMove(activeList, oldIndex, newIndex);
     const updates = reordered.map((item, idx) => ({ id: item.id, sortOrder: idx }));
     const orderMap = new Map(updates.map(u => [u.id, u.sortOrder]));
+    const oldOrderMap = new Map(activeList.map((item, idx) => [item.id, idx]));
 
     // 乐观更新内存
     setPantryItems(prev => prev.map(p =>
@@ -381,16 +472,31 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         orderMap.has(p.id) ? { ...p, sortOrder: orderMap.get(p.id) } : p
       );
       saveDemoPantry(all);
+      pushUndo('移动食材', async () => {
+        const restored = getDemoPantry().map(p =>
+          oldOrderMap.has(p.id) ? { ...p, sortOrder: oldOrderMap.get(p.id) } : p
+        );
+        saveDemoPantry(restored);
+        setPantryItems(restored);
+      });
       return;
     }
 
     await updatePantrySortOrders(updates);
-  }, [isDemo, configured]);
+    pushUndo('移动食材', async () => {
+      const oldUpdates = activeList.map((item, idx) => ({ id: item.id, sortOrder: idx }));
+      await updatePantrySortOrders(oldUpdates);
+      setPantryItems(prev => prev.map(p =>
+        oldOrderMap.has(p.id) ? { ...p, sortOrder: oldOrderMap.get(p.id) } : p
+      ));
+    });
+  }, [isDemo, configured, pushUndo]);
 
   // 批量重排：接受一个新的顺序数组，更新所有 sortOrder
   const reorderPantryItemsBatch = useCallback(async (newOrder: PantryItem[]) => {
     const updates = newOrder.map((item, idx) => ({ id: item.id, sortOrder: idx }));
     const orderMap = new Map(updates.map(u => [u.id, u.sortOrder]));
+    const oldOrderMap = new Map(newOrder.map((item, idx) => [item.id, item.sortOrder ?? idx]));
 
     // 乐观更新内存
     setPantryItems(prev => prev.map(p =>
@@ -402,11 +508,25 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         orderMap.has(p.id) ? { ...p, sortOrder: orderMap.get(p.id) } : p
       );
       saveDemoPantry(all);
+      pushUndo('移动食材', async () => {
+        const restored = getDemoPantry().map(p =>
+          oldOrderMap.has(p.id) ? { ...p, sortOrder: oldOrderMap.get(p.id) } : p
+        );
+        saveDemoPantry(restored);
+        setPantryItems(restored);
+      });
       return;
     }
 
     await updatePantrySortOrders(updates);
-  }, [isDemo, configured]);
+    pushUndo('移动食材', async () => {
+      const oldUpdates = newOrder.map((item, idx) => ({ id: item.id, sortOrder: item.sortOrder ?? idx }));
+      await updatePantrySortOrders(oldUpdates);
+      setPantryItems(prev => prev.map(p =>
+        oldOrderMap.has(p.id) ? { ...p, sortOrder: oldOrderMap.get(p.id) } : p
+      ));
+    });
+  }, [isDemo, configured, pushUndo]);
 
   // 拖拽到象限：修改食材分类（四象限模式下跨象限拖拽）
   const setPantryCategory = useCallback(async (id: string, category: PantryCategory) => {
@@ -422,7 +542,12 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
   const setPantryCategoryBatch = useCallback(async (ids: string[], category: PantryCategory) => {
     const realIds = ids.filter(id => !id.startsWith('virtual-'));
     if (realIds.length === 0) return;
-    // 目标象限当前最大 sortOrder，批量分配递增顺序
+    // 保存旧值用于 undo
+    const oldValuesMap = new Map<string, { category: PantryCategory; sortOrder: number }>();
+    for (const id of realIds) {
+      const item = pantryItems.find(p => p.id === id);
+      if (item) oldValuesMap.set(id, { category: item.category, sortOrder: item.sortOrder ?? 0 });
+    }
     const maxOrder = Math.max(-1, ...pantryItems
       .filter(p => p.status === 'active' && p.category === category)
       .map(p => p.sortOrder ?? 0));
@@ -438,12 +563,30 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         orderMap.has(p.id) ? { ...p, ...orderMap.get(p.id) } : p
       );
       saveDemoPantry(all);
+      pushUndo('修改分类', async () => {
+        const restored = getDemoPantry().map(p =>
+          oldValuesMap.has(p.id) ? { ...p, ...oldValuesMap.get(p.id) } : p
+        );
+        saveDemoPantry(restored);
+        setPantryItems(restored);
+      });
       return;
     }
     await Promise.all(
       realIds.map((id, idx) => updatePantryItem(id, { category, sortOrder: maxOrder + 1 + idx }))
     );
-  }, [pantryItems, isDemo, configured]);
+    pushUndo('修改分类', async () => {
+      await Promise.all(
+        realIds.map(id => {
+          const old = oldValuesMap.get(id);
+          return old ? updatePantryItem(id, old) : Promise.resolve();
+        })
+      );
+      setPantryItems(prev => prev.map(p =>
+        oldValuesMap.has(p.id) ? { ...p, ...oldValuesMap.get(p.id) } : p
+      ));
+    });
+  }, [pantryItems, isDemo, configured, pushUndo]);
 
   // ===== 菜谱 CRUD =====
 
@@ -455,24 +598,46 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       const updated = [...getDemoRecipes(), recipe];
       saveDemoRecipes(updated);
       setRecipes(updated);
+      pushUndo(`添加菜谱"${title}"`, async () => {
+        const all = getDemoRecipes().filter(r => r.id !== recipe.id);
+        saveDemoRecipes(all);
+        setRecipes(all);
+      });
       return recipe;
     }
     const maxOrder = Math.max(0, ...recipes.map(r => r.sortOrder ?? 0));
     const result = await addRecipe({ userId, title, sortOrder: maxOrder + 1 });
-    if (result) setRecipes(prev => [...prev, result]);
+    if (result) {
+      setRecipes(prev => [...prev, result]);
+      pushUndo(`添加菜谱"${title}"`, async () => {
+        await deleteRecipe(result.id);
+        setRecipes(prev => prev.filter(r => r.id !== result.id));
+      });
+    }
     return result;
-  }, [userId, isDemo, configured, recipes]);
+  }, [userId, isDemo, configured, recipes, pushUndo]);
 
   const editRecipeTitle = useCallback(async (id: string, title: string) => {
+    const oldRecipe = recipes.find(r => r.id === id);
+    const oldTitle = oldRecipe?.title || '';
     if (isDemo || !configured) {
       const updated = getDemoRecipes().map(r => r.id === id ? { ...r, title } : r);
       saveDemoRecipes(updated);
       setRecipes(updated);
+      pushUndo('编辑菜谱名', async () => {
+        const all = getDemoRecipes().map(r => r.id === id ? { ...r, title: oldTitle } : r);
+        saveDemoRecipes(all);
+        setRecipes(all);
+      });
       return;
     }
     await updateRecipe(id, title);
     setRecipes(prev => prev.map(r => r.id === id ? { ...r, title } : r));
-  }, [isDemo, configured]);
+    pushUndo('编辑菜谱名', async () => {
+      await updateRecipe(id, oldTitle);
+      setRecipes(prev => prev.map(r => r.id === id ? { ...r, title: oldTitle } : r));
+    });
+  }, [recipes, isDemo, configured, pushUndo]);
 
   // 切换菜谱状态（激活 ↔ 已完成）
   // 新模式：只切换菜谱状态，不修改食材数量
@@ -483,45 +648,91 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     if (!recipe) return;
     const newActive = recipe.active === false;
     const newCompletedAt = newActive ? undefined : new Date().toISOString();
+    const oldActive = recipe.active;
+    const oldCompletedAt = recipe.completedAt;
 
     if (isDemo || !configured) {
       const updated = getDemoRecipes().map(r => r.id === id ? { ...r, active: newActive, completedAt: newCompletedAt } : r);
       saveDemoRecipes(updated);
       setRecipes(updated);
+      pushUndo(newActive ? '撤销完成菜谱' : '完成菜谱', async () => {
+        const all = getDemoRecipes().map(r => r.id === id ? { ...r, active: oldActive, completedAt: oldCompletedAt } : r);
+        saveDemoRecipes(all);
+        setRecipes(all);
+      });
       return;
     }
     await updateRecipeActive(id, newActive, newCompletedAt);
     setRecipes(prev => prev.map(r => r.id === id ? { ...r, active: newActive, completedAt: newCompletedAt } : r));
-  }, [recipes, isDemo, configured]);
+    pushUndo(newActive ? '撤销完成菜谱' : '完成菜谱', async () => {
+      await updateRecipeActive(id, oldActive ?? true, oldCompletedAt);
+      setRecipes(prev => prev.map(r => r.id === id ? { ...r, active: oldActive, completedAt: oldCompletedAt } : r));
+    });
+  }, [recipes, isDemo, configured, pushUndo]);
 
   const removeRecipe = useCallback(async (id: string) => {
+    const recipe = recipes.find(r => r.id === id);
+    const childItems = recipeItems.filter(ri => ri.recipeId === id);
     if (isDemo || !configured) {
       saveDemoRecipes(getDemoRecipes().filter(r => r.id !== id));
       saveDemoRecipeItems(getDemoRecipeItems().filter(ri => ri.recipeId !== id));
       setRecipes(getDemoRecipes());
       setRecipeItems(getDemoRecipeItems());
+      if (recipe) {
+        pushUndo(`删除菜谱"${recipe.title}"`, async () => {
+          const allR = getDemoRecipes();
+          if (!allR.find(r => r.id === id)) {
+            saveDemoRecipes([...allR, recipe]);
+            saveDemoRecipeItems([...getDemoRecipeItems(), ...childItems]);
+            setRecipes([...allR, recipe]);
+            setRecipeItems([...getDemoRecipeItems(), ...childItems]);
+          }
+        });
+      }
       return;
     }
     await deleteRecipe(id);
     setRecipes(prev => prev.filter(r => r.id !== id));
     setRecipeItems(prev => prev.filter(ri => ri.recipeId !== id));
-  }, [isDemo, configured]);
+    if (recipe) {
+      pushUndo(`删除菜谱"${recipe.title}"`, async () => {
+        const result = await addRecipe({ userId: recipe.userId, title: recipe.title, sortOrder: recipe.sortOrder ?? 0 });
+        if (result) {
+          setRecipes(prev => [...prev, result]);
+          for (const ci of childItems) {
+            const ri = await addRecipeItem({ recipeId: result.id, name: ci.name, quantity: ci.quantity });
+            if (ri) setRecipeItems(prev => [...prev, ri]);
+          }
+        }
+      });
+    }
+  }, [recipes, recipeItems, isDemo, configured, pushUndo]);
 
   // 拖拽排序：重新排列菜谱
   const reorderRecipes = useCallback(async (activeList: Recipe[], oldIndex: number, newIndex: number) => {
     const reordered = arrayMove(activeList, oldIndex, newIndex);
     const updates = reordered.map((item, idx) => ({ id: item.id, sortOrder: idx }));
+    const oldUpdates = activeList.map((item, idx) => ({ id: item.id, sortOrder: idx }));
 
     // 乐观更新内存（用重排后的数组替换，不仅仅是更新 sortOrder 字段）
     setRecipes(reordered.map((r, idx) => ({ ...r, sortOrder: idx })));
 
     if (isDemo || !configured) {
       saveDemoRecipes(reordered.map((r, idx) => ({ ...r, sortOrder: idx })));
+      pushUndo('移动菜谱', async () => {
+        const restored = activeList.map((r, idx) => ({ ...r, sortOrder: idx }));
+        saveDemoRecipes(restored);
+        setRecipes(restored);
+      });
       return;
     }
 
     await updateRecipeSortOrders(updates);
-  }, [isDemo, configured]);
+    pushUndo('移动菜谱', async () => {
+      await updateRecipeSortOrders(oldUpdates);
+      setRecipes(activeList.map((r, idx) => ({ ...r, sortOrder: idx })));
+    });
+  }, [isDemo, configured, pushUndo]);
 
   // ===== 菜谱食材 CRUD =====
 
@@ -531,33 +742,72 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       const updated = [...getDemoRecipeItems(), item];
       saveDemoRecipeItems(updated);
       setRecipeItems(updated);
+      pushUndo(`添加菜谱食材"${name}"`, async () => {
+        const all = getDemoRecipeItems().filter(ri => ri.id !== item.id);
+        saveDemoRecipeItems(all);
+        setRecipeItems(all);
+      });
       return;
     }
     const result = await addRecipeItem({ recipeId, name, quantity });
-    if (result) setRecipeItems(prev => [...prev, result]);
-  }, [isDemo, configured]);
+    if (result) {
+      setRecipeItems(prev => [...prev, result]);
+      pushUndo(`添加菜谱食材"${name}"`, async () => {
+        await deleteRecipeItem(result.id);
+        setRecipeItems(prev => prev.filter(ri => ri.id !== result.id));
+      });
+    }
+  }, [isDemo, configured, pushUndo]);
 
   const editRecipeItem = useCallback(async (id: string, updates: Partial<RecipeItem>) => {
+    const oldItem = recipeItems.find(ri => ri.id === id);
+    if (!oldItem) return;
+    const oldValues = Object.fromEntries(
+      Object.keys(updates).map(k => [k, (oldItem as unknown as Record<string, unknown>)[k]])
+    ) as Partial<RecipeItem>;
     if (isDemo || !configured) {
       const updated = getDemoRecipeItems().map(ri => ri.id === id ? { ...ri, ...updates } : ri);
       saveDemoRecipeItems(updated);
       setRecipeItems(updated);
+      pushUndo('编辑菜谱食材', async () => {
+        const all = getDemoRecipeItems().map(ri => ri.id === id ? { ...ri, ...oldValues } : ri);
+        saveDemoRecipeItems(all);
+        setRecipeItems(all);
+      });
       return;
     }
     await updateRecipeItem(id, updates);
     setRecipeItems(prev => prev.map(ri => ri.id === id ? { ...ri, ...updates } : ri));
-  }, [isDemo, configured]);
+    pushUndo('编辑菜谱食材', async () => {
+      await updateRecipeItem(id, oldValues);
+      setRecipeItems(prev => prev.map(ri => ri.id === id ? { ...ri, ...oldValues } : ri));
+    });
+  }, [recipeItems, isDemo, configured, pushUndo]);
 
   const removeRecipeItem = useCallback(async (id: string) => {
+    const item = recipeItems.find(ri => ri.id === id);
+    if (!item) return;
     if (isDemo || !configured) {
       const updated = getDemoRecipeItems().filter(ri => ri.id !== id);
       saveDemoRecipeItems(updated);
       setRecipeItems(updated);
+      pushUndo(`删除菜谱食材"${item.name}"`, async () => {
+        const all = getDemoRecipeItems();
+        if (!all.find(ri => ri.id === id)) {
+          const restored = [...all, item];
+          saveDemoRecipeItems(restored);
+          setRecipeItems(restored);
+        }
+      });
       return;
     }
     await deleteRecipeItem(id);
     setRecipeItems(prev => prev.filter(ri => ri.id !== id));
-  }, [isDemo, configured]);
+    pushUndo(`删除菜谱食材"${item.name}"`, async () => {
+      const result = await addRecipeItem({ recipeId: item.recipeId, name: item.name, quantity: item.quantity });
+      if (result) setRecipeItems(prev => [...prev, result]);
+    });
+  }, [recipeItems, isDemo, configured, pushUndo]);
 
   // ===== 实时计算：食材显示信息 =====
   // 根据菜谱状态实时计算每个食材的剩余量和使用记录
@@ -740,5 +990,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     removeRecipeItem,
     getPantryDisplay,
     getRecipeItemsWithMatch,
+    undoInfo,
+    undo,
   };
 }
