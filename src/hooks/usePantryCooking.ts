@@ -889,6 +889,30 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       // 找到所有匹配此食材的 recipe_items
       const matchingRIs = recipeItems.filter(ri => ri.name === item.name);
 
+      // [TEMP DEBUG] 诊断活跃菜谱匹配问题
+      if (matchingRIs.length > 0 && !item.id.startsWith('virtual-')) {
+        console.log('[DEBUG]', item.name, {
+          itemId: item.id,
+          status: item.status,
+          originalQuantity: item.originalQuantity,
+          quantity: item.quantity,
+          originalQty_used: originalQty,
+          originalParsed: originalParsed ? { num: originalParsed.numerator, den: originalParsed.denominator, unit: originalParsed.unit } : null,
+          matchingRIs: matchingRIs.map(ri => {
+            const r = recipes.find(rr => rr.id === ri.recipeId);
+            const rp = parseQuantity(ri.quantity);
+            return {
+              riId: ri.id,
+              recipeTitle: r?.title,
+              recipeActive: r?.active,
+              riQuantity: ri.quantity,
+              riParsed: rp ? { num: rp.numerator, den: rp.denominator, unit: rp.unit } : null,
+              unitsMatch: originalParsed && rp && originalParsed.unit === rp.unit,
+            };
+          }),
+        });
+      }
+
       const usages: PantryUsageInfo[] = [];
       let remainingNum = originalParsed?.numerator ?? 0;
       let remainingDen = originalParsed?.denominator ?? 1;
@@ -936,6 +960,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
             status: 'used',
             deducted: true,
           });
+          console.log('[DEBUG branch]', item.name, '→ completed+deduct', recipe.title, 'remaining:', remainingNum, '/', remainingDen);
         } else if (isCompleted) {
           // 已完成但单位不一致（或待买项） → 标注"已用"但不扣减
           usages.push({
@@ -945,9 +970,11 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
             status: 'used',
             deducted: false,
           });
+          console.log('[DEBUG branch]', item.name, '→ completed+nomatch', recipe.title, 'unitsMatch:', unitsMatch);
         } else if (!isToBuy && unitsMatch) {
           // 活跃菜谱 + 单位一致 → 虚拟扣减，判断够不够
           const result = subtractFraction(activeRemainingNum, activeRemainingDen, recipeParsed.numerator, recipeParsed.denominator);
+          console.log('[DEBUG branch]', item.name, '→ active+match', recipe.title, 'subtract result:', result.num, '/', result.den, 'willAnnotate:', result.num >= 0);
           if (result.num >= 0) {
             // 够用 → 标注"需用"
             activeRemainingNum = result.num;
@@ -970,6 +997,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
             status: 'needed',
             deducted: false,
           });
+          console.log('[DEBUG branch]', item.name, '→ active+nomatch/or-tobuy', recipe.title, 'isToBuy:', isToBuy, 'unitsMatch:', unitsMatch);
         }
       }
 
