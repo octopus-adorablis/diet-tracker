@@ -833,6 +833,52 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       if (p.status === 'checked') usedUpNames.add(p.name);
     }
 
+    // 预计算：哪些活跃菜谱食材已被真实活跃食材"覆盖"（虚拟扣减后够用）
+    // 用于虚拟待买项（virtual-shortfall-*）只显示未被覆盖的菜谱
+    // 场景：食材120g，菜谱A需120g + 菜谱B需120g → 菜谱A被覆盖，待买项只显示菜谱B
+    const coveredRecipeItemIds = new Set<string>();
+    for (const item of allPantryItems) {
+      if (item.status !== 'active' || item.id.startsWith('virtual-')) continue;
+      const origParsed = parseQuantity(item.quantity);
+      if (!origParsed) continue;
+
+      // 先扣减已完成菜谱（与主循环逻辑一致）
+      let remNum = origParsed.numerator;
+      let remDen = origParsed.denominator;
+      const itemMatchingRIs = recipeItems.filter(ri => ri.name === item.name);
+      for (const ri of itemMatchingRIs) {
+        const recipe = recipes.find(r => r.id === ri.recipeId);
+        if (!recipe || recipe.active !== false) continue;
+        const isNewBatch = usedUpNames.has(item.name);
+        const timeSkip = isNewBatch && recipe.completedAt && item.createdAt &&
+            new Date(item.createdAt) > new Date(recipe.completedAt);
+        if (timeSkip) continue;
+        const rp = parseQuantity(ri.quantity);
+        if (rp && origParsed.unit === rp.unit) {
+          const r = subtractFraction(remNum, remDen, rp.numerator, rp.denominator);
+          remNum = r.num;
+          remDen = r.den;
+        }
+      }
+
+      // 再虚拟扣减活跃菜谱，标记"覆盖"的 recipe item
+      let actRemNum = remNum;
+      let actRemDen = remDen;
+      for (const ri of itemMatchingRIs) {
+        if (coveredRecipeItemIds.has(ri.id)) continue; // 已被其他食材覆盖
+        const recipe = recipes.find(r => r.id === ri.recipeId);
+        if (!recipe || recipe.active === false) continue;
+        const rp = parseQuantity(ri.quantity);
+        if (!rp || origParsed.unit !== rp.unit) continue;
+        const r = subtractFraction(actRemNum, actRemDen, rp.numerator, rp.denominator);
+        if (r.num >= 0) {
+          coveredRecipeItemIds.add(ri.id);
+          actRemNum = r.num;
+          actRemDen = r.den;
+        }
+      }
+    }
+
     for (const item of allPantryItems) {
       if (item.status === 'checked') continue; // 已用完的跳过
 
@@ -864,6 +910,13 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         const timeSkip = isCompleted && isNewBatch && recipe.completedAt && item.createdAt &&
             new Date(item.createdAt) > new Date(recipe.completedAt);
         if (timeSkip) continue;
+
+        // 虚拟待买项（数量不足自动生成的）跳过已被真实食材覆盖的菜谱
+        // 只显示"不够买"的那部分菜谱，避免与真实食材的标注重复
+        if (isToBuy && item.id.startsWith('virtual-shortfall-') && coveredRecipeItemIds.has(ri.id)) {
+          continue;
+        }
+
         const recipeParsed = parseQuantity(ri.quantity);
         const unitsMatch = originalParsed && recipeParsed && originalParsed.unit === recipeParsed.unit;
 
