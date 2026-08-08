@@ -476,6 +476,14 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       }
     }
 
+    // 预计算：哪些食材名称有"已用完"记录
+    // 有"已用完"记录意味着当前活跃的是"新批次"，需要时间判断防止误匹配旧菜谱
+    // 没有"已用完"记录意味着这是原始批次，应匹配所有已完成菜谱
+    const usedUpNames = new Set<string>();
+    for (const p of allPantryItems) {
+      if (p.status === 'checked') usedUpNames.add(p.name);
+    }
+
     for (const item of allPantryItems) {
       if (item.status === 'checked') continue; // 已用完的跳过
 
@@ -498,9 +506,10 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         if (!recipe) continue;
 
         const isCompleted = recipe.active === false;
-        // 时间判断：食材在菜谱完成之后才入库的，跳过
-        // （新买的食材不应匹配历史已完成的菜谱）
-        if (isCompleted && recipe.completedAt && item.createdAt &&
+        // 时间判断：只在"新批次"食材上生效（同名有"已用完"记录）
+        // 原始批次（没有"已用完"的）不需要时间判断，应匹配所有已完成菜谱
+        const isNewBatch = usedUpNames.has(item.name);
+        if (isCompleted && isNewBatch && recipe.completedAt && item.createdAt &&
             new Date(item.createdAt) > new Date(recipe.completedAt)) {
           continue;
         }
