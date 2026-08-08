@@ -295,7 +295,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         const matchingItem = pantryItems.find(p => p.status === 'active' && p.name === name);
         if (!matchingItem) continue;
 
-        const originalParsed = parseQuantity(matchingItem.quantity);
+        const originalParsed = parseQuantity(matchingItem.originalQuantity || matchingItem.quantity);
         if (!originalParsed || originalParsed.unit !== demand.unit) continue;
 
         // 计算可用量（原始量 - 已完成菜谱扣减量）
@@ -839,7 +839,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     const coveredRecipeItemIds = new Set<string>();
     for (const item of allPantryItems) {
       if (item.status !== 'active' || item.id.startsWith('virtual-')) continue;
-      const origParsed = parseQuantity(item.quantity);
+      const origParsed = parseQuantity(item.originalQuantity || item.quantity);
       if (!origParsed) continue;
 
       // 先扣减已完成菜谱（与主循环逻辑一致）
@@ -883,7 +883,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       if (item.status === 'checked') continue; // 已用完的跳过
 
       const isToBuy = item.status === 'to_buy';
-      const originalQty = item.quantity;
+      const originalQty = item.originalQuantity || item.quantity;
       const originalParsed = parseQuantity(originalQty);
 
       // 找到所有匹配此食材的 recipe_items
