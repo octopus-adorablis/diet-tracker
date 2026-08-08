@@ -387,6 +387,27 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     await updatePantrySortOrders(updates);
   }, [isDemo, configured]);
 
+  // 批量重排：接受一个新的顺序数组，更新所有 sortOrder
+  const reorderPantryItemsBatch = useCallback(async (newOrder: PantryItem[]) => {
+    const updates = newOrder.map((item, idx) => ({ id: item.id, sortOrder: idx }));
+    const orderMap = new Map(updates.map(u => [u.id, u.sortOrder]));
+
+    // 乐观更新内存
+    setPantryItems(prev => prev.map(p =>
+      orderMap.has(p.id) ? { ...p, sortOrder: orderMap.get(p.id) } : p
+    ));
+
+    if (isDemo || !configured) {
+      const all = getDemoPantry().map(p =>
+        orderMap.has(p.id) ? { ...p, sortOrder: orderMap.get(p.id) } : p
+      );
+      saveDemoPantry(all);
+      return;
+    }
+
+    await updatePantrySortOrders(updates);
+  }, [isDemo, configured]);
+
   // 拖拽到象限：修改食材分类（四象限模式下跨象限拖拽）
   const setPantryCategory = useCallback(async (id: string, category: PantryCategory) => {
     if (id.startsWith('virtual-')) return;
@@ -706,6 +727,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     toggleChecked,
     convertToBuyToActive,
     reorderPantryItems,
+    reorderPantryItemsBatch,
     setPantryCategory,
     setPantryCategoryBatch,
     createRecipe,

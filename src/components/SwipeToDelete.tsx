@@ -5,6 +5,7 @@ interface SwipeToDeleteProps {
   onDelete: () => void;
   children: ReactNode;
   className?: string;
+  overflowVisible?: boolean;
 }
 
 /**
@@ -12,7 +13,7 @@ interface SwipeToDeleteProps {
  * 手机端：手指左滑 >20px 露出红色"删除"按钮，右滑收起。
  * 电脑端：鼠标悬停时右上角露出小垃圾桶图标。
  */
-export default function SwipeToDelete({ onDelete, children, className = '' }: SwipeToDeleteProps) {
+export default function SwipeToDelete({ onDelete, children, className = '', overflowVisible = false }: SwipeToDeleteProps) {
   const [revealed, setRevealed] = useState(false);
   const touchStart = useRef({ x: 0, y: 0 });
 
@@ -33,7 +34,7 @@ export default function SwipeToDelete({ onDelete, children, className = '' }: Sw
   };
 
   return (
-    <div className={`relative overflow-hidden group ${className}`}>
+    <div className={`relative ${overflowVisible ? 'overflow-visible' : 'overflow-hidden'} group ${className}`}>
       {/* 手机端：左滑露出的红色删除按钮 */}
       <button
         onClick={(e) => { e.stopPropagation(); onDelete(); }}

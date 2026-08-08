@@ -36,6 +36,7 @@ interface PantryViewProps {
   onConvertToBuy: (id: string, quantity: string) => Promise<void>;
   onDeletePantryItem: (id: string) => Promise<void>;
   onReorder: (activeList: PantryItem[], oldIndex: number, newIndex: number) => Promise<void>;
+  onReorderBatch: (newOrder: PantryItem[]) => Promise<void>;
   onSetCategory: (id: string, category: PantryCategory) => Promise<void>;
   onSetCategoryBatch: (ids: string[], category: PantryCategory) => Promise<void>;
   onNavigateToRecipe: (recipeId: string) => void;
@@ -45,7 +46,7 @@ interface PantryViewProps {
 
 export default function PantryView({
   pantryItems, getPantryDisplay, onCreatePantryItem, onEditPantryItem, onToggleChecked, onConvertToBuy,
-  onDeletePantryItem, onReorder, onSetCategory, onSetCategoryBatch, onNavigateToRecipe, onNavigateToCooking, onOpenCookingInNewTab,
+  onDeletePantryItem, onReorder, onReorderBatch, onSetCategory, onSetCategoryBatch, onNavigateToRecipe, onNavigateToCooking, onOpenCookingInNewTab,
 }: PantryViewProps) {
   const [newName, setNewName] = useState('');
   const [newQty, setNewQty] = useState('');
@@ -168,13 +169,29 @@ export default function PantryView({
       if (activeCat !== targetCategory) {
         onSetCategoryBatch(Array.from(selectedIds), targetCategory);
       }
-      // 拖到同象限上的其他项 → 排序（仅单个）
+      // 拖到同象限上的其他项 → 批量排序
       if (activeCat === targetCategory && !overId.startsWith('quad-')) {
         const catItems = itemsByCategory[activeCat];
-        const oldIndex = catItems.findIndex(i => i.id === active.id);
-        const newIndex = catItems.findIndex(i => i.id === over.id);
-        if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-          onReorder(catItems, oldIndex, newIndex);
+        const overIdx = catItems.findIndex(i => i.id === over.id);
+        const activeIdx = catItems.findIndex(i => i.id === active.id);
+        if (overIdx !== -1 && activeIdx !== -1 && overIdx !== activeIdx) {
+          if (selectedIds.size > 1) {
+            // 多选：把所有选中项移到目标位置，保持相对顺序
+            const selected = catItems.filter(i => selectedIds.has(i.id));
+            const unselected = catItems.filter(i => !selectedIds.has(i.id));
+            let insertAt = unselected.findIndex(i => i.id === over.id);
+            if (insertAt === -1) insertAt = unselected.length;
+            // 向下拖时插到目标项后面
+            if (activeIdx < overIdx) insertAt = Math.min(insertAt + 1, unselected.length);
+            const newOrder = [
+              ...unselected.slice(0, insertAt),
+              ...selected,
+              ...unselected.slice(insertAt),
+            ];
+            onReorderBatch(newOrder);
+          } else {
+            onReorder(catItems, activeIdx, overIdx);
+          }
         }
       }
       exitSelectionMode();
@@ -664,12 +681,12 @@ function SortablePantryItemCard({
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.4 : undefined,
+    opacity: isDragging ? 0.5 : undefined,
     zIndex: isDragging ? 50 : 'auto' as const,
   };
 
   return (
-    <SwipeToDelete onDelete={() => onDelete(item.id)}>
+    <SwipeToDelete onDelete={() => onDelete(item.id)} overflowVisible={isDragging}>
       <div
         ref={setNodeRef}
         style={style}
@@ -678,7 +695,7 @@ function SortablePantryItemCard({
         onClick={selectionMode ? () => onToggleSelect(item.id) : undefined}
         className={`bg-white rounded-xl border p-2 sm:p-3 transition-shadow ${
           isSelected ? 'border-grape-400 bg-grape-50/50 ring-2 ring-grape-200' : 'border-sage-100'
-        } ${isChecked ? 'opacity-50' : ''} ${isDragging ? 'shadow-lg border-grape-300' : ''}`}
+        } ${isChecked ? 'opacity-50' : ''} ${isDragging ? 'shadow-lg border-2 border-dashed border-grape-300 bg-grape-50/40' : ''}`}
       >
         <div className="flex items-center gap-2 sm:gap-3">
           {/* 左侧：选择模式=勾选框，普通模式=勾选用完圆点 */}

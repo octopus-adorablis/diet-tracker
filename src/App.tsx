@@ -124,6 +124,7 @@ function App() {
               onConvertToBuy={pantryCooking.convertToBuyToActive}
               onDeletePantryItem={pantryCooking.removePantryItem}
               onReorder={pantryCooking.reorderPantryItems}
+              onReorderBatch={pantryCooking.reorderPantryItemsBatch}
               onSetCategory={pantryCooking.setPantryCategory}
               onSetCategoryBatch={pantryCooking.setPantryCategoryBatch}
               onNavigateToRecipe={(recipeId) => navigateToCooking(recipeId)}
