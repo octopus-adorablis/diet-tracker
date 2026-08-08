@@ -9,7 +9,7 @@ import {
 } from '../lib/supabase';
 import {
   parseQuantity, formatRemaining, formatQuantity,
-  addFraction, subtractFraction,
+  addFraction, subtractFraction, unitsMatch,
 } from '../lib/quantity';
 import type { PantryItem, Recipe, RecipeItem, RecipeItemWithMatch, PantryStatus, PantryCategory, PantryUsageInfo, PantryDisplayInfo } from '../types';
 
@@ -169,7 +169,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
         for (const rec of subtractedRecords) {
           const recParsed = parseQuantity(rec.q);
-          if (recParsed && recParsed.unit === currentParsed.unit) {
+          if (recParsed && unitsMatch(recParsed.unit, currentParsed.unit)) {
             const added = addFraction(origNum, origDen, recParsed.numerator, recParsed.denominator);
             origNum = added.num;
             origDen = added.den;
@@ -257,14 +257,14 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       const parsed = parseQuantity(ri.quantity);
       if (!parsed) continue;
       const existing = activeDemandMap.get(ri.name);
-      if (existing) {
-        if (existing.unit === parsed.unit) {
-          const added = addFraction(existing.totalNum, existing.totalDen, parsed.numerator, parsed.denominator);
-          existing.totalNum = added.num;
-          existing.totalDen = added.den;
-          existing.isFraction = existing.isFraction || parsed.isFraction || parsed.isHalf;
-        }
-      } else {
+        if (existing) {
+          if (unitsMatch(existing.unit, parsed.unit)) {
+            const added = addFraction(existing.totalNum, existing.totalDen, parsed.numerator, parsed.denominator);
+            existing.totalNum = added.num;
+            existing.totalDen = added.den;
+            existing.isFraction = existing.isFraction || parsed.isFraction || parsed.isHalf;
+          }
+        } else {
         activeDemandMap.set(ri.name, {
           totalNum: parsed.numerator,
           totalDen: parsed.denominator,
@@ -296,7 +296,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         if (!matchingItem) continue;
 
         const originalParsed = parseQuantity(matchingItem.originalQuantity || matchingItem.quantity);
-        if (!originalParsed || originalParsed.unit !== demand.unit) continue;
+        if (!originalParsed || !unitsMatch(originalParsed.unit, demand.unit)) continue;
 
         // 计算可用量（原始量 - 已完成菜谱扣减量）
         let availNum = originalParsed.numerator;
@@ -313,7 +313,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
           if (timeSkip) continue;
 
           const recipeParsed = parseQuantity(ri.quantity);
-          if (recipeParsed && originalParsed.unit === recipeParsed.unit) {
+          if (recipeParsed && unitsMatch(originalParsed.unit, recipeParsed.unit)) {
             const result = subtractFraction(availNum, availDen, recipeParsed.numerator, recipeParsed.denominator);
             availNum = result.num;
             availDen = result.den;
@@ -854,7 +854,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
             new Date(item.createdAt) > new Date(recipe.completedAt);
         if (timeSkip) continue;
         const rp = parseQuantity(ri.quantity);
-        if (rp && origParsed.unit === rp.unit) {
+        if (rp && unitsMatch(origParsed.unit, rp.unit)) {
           const r = subtractFraction(remNum, remDen, rp.numerator, rp.denominator);
           remNum = r.num;
           remDen = r.den;
@@ -869,7 +869,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         const recipe = recipes.find(r => r.id === ri.recipeId);
         if (!recipe || recipe.active === false) continue;
         const rp = parseQuantity(ri.quantity);
-        if (!rp || origParsed.unit !== rp.unit) continue;
+        if (!rp || !unitsMatch(origParsed.unit, rp.unit)) continue;
         const r = subtractFraction(actRemNum, actRemDen, rp.numerator, rp.denominator);
         if (r.num >= 0) {
           coveredRecipeItemIds.add(ri.id);
@@ -888,30 +888,6 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
       // 找到所有匹配此食材的 recipe_items
       const matchingRIs = recipeItems.filter(ri => ri.name === item.name);
-
-      // [TEMP DEBUG] 诊断活跃菜谱匹配问题
-      if (matchingRIs.length > 0 && !item.id.startsWith('virtual-')) {
-        console.log('[DEBUG]', item.name, {
-          itemId: item.id,
-          status: item.status,
-          originalQuantity: item.originalQuantity,
-          quantity: item.quantity,
-          originalQty_used: originalQty,
-          originalParsed: originalParsed ? { num: originalParsed.numerator, den: originalParsed.denominator, unit: originalParsed.unit } : null,
-          matchingRIs: matchingRIs.map(ri => {
-            const r = recipes.find(rr => rr.id === ri.recipeId);
-            const rp = parseQuantity(ri.quantity);
-            return {
-              riId: ri.id,
-              recipeTitle: r?.title,
-              recipeActive: r?.active,
-              riQuantity: ri.quantity,
-              riParsed: rp ? { num: rp.numerator, den: rp.denominator, unit: rp.unit } : null,
-              unitsMatch: originalParsed && rp && originalParsed.unit === rp.unit,
-            };
-          }),
-        });
-      }
 
       const usages: PantryUsageInfo[] = [];
       let remainingNum = originalParsed?.numerator ?? 0;
@@ -942,9 +918,9 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         }
 
         const recipeParsed = parseQuantity(ri.quantity);
-        const unitsMatch = originalParsed && recipeParsed && originalParsed.unit === recipeParsed.unit;
+        const isUnitsMatch = originalParsed && recipeParsed && unitsMatch(originalParsed.unit, recipeParsed.unit);
 
-        if (isCompleted && !isToBuy && unitsMatch) {
+        if (isCompleted && !isToBuy && isUnitsMatch) {
           // 已完成 + 单位一致 + 不是待买 → 扣减
           const result = subtractFraction(remainingNum, remainingDen, recipeParsed.numerator, recipeParsed.denominator);
           if (result.num < 0) insufficient = true;
@@ -960,7 +936,6 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
             status: 'used',
             deducted: true,
           });
-          console.log('[DEBUG branch]', item.name, '→ completed+deduct', recipe.title, 'remaining:', remainingNum, '/', remainingDen);
         } else if (isCompleted) {
           // 已完成但单位不一致（或待买项） → 标注"已用"但不扣减
           usages.push({
@@ -970,11 +945,9 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
             status: 'used',
             deducted: false,
           });
-          console.log('[DEBUG branch]', item.name, '→ completed+nomatch', recipe.title, 'unitsMatch:', unitsMatch);
-        } else if (!isToBuy && unitsMatch) {
+        } else if (!isToBuy && isUnitsMatch) {
           // 活跃菜谱 + 单位一致 → 虚拟扣减，判断够不够
           const result = subtractFraction(activeRemainingNum, activeRemainingDen, recipeParsed.numerator, recipeParsed.denominator);
-          console.log('[DEBUG branch]', item.name, '→ active+match', recipe.title, 'subtract result:', result.num, '/', result.den, 'willAnnotate:', result.num >= 0);
           if (result.num >= 0) {
             // 够用 → 标注"需用"
             activeRemainingNum = result.num;
@@ -997,7 +970,6 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
             status: 'needed',
             deducted: false,
           });
-          console.log('[DEBUG branch]', item.name, '→ active+nomatch/or-tobuy', recipe.title, 'isToBuy:', isToBuy, 'unitsMatch:', unitsMatch);
         }
       }
 

@@ -52,6 +52,13 @@ export function formatRemaining(num: number, den: number, unit: string, useFract
   return `剩${formatQuantity(num, den, useFraction)}${unit}`;
 }
 
+// 单位匹配：直接相等，或空单位与 g/克 视为等价
+const MASS_UNITS = new Set(['', 'g', '克']);
+export function unitsMatch(a: string, b: string): boolean {
+  if (a === b) return true;
+  return MASS_UNITS.has(a) && MASS_UNITS.has(b);
+}
+
 const CHINESE_NUMBERS: Record<string, number> = {
   '半': 0.5, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5,
   '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
