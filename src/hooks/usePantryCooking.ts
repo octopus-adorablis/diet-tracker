@@ -494,13 +494,6 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       // 找到所有匹配此食材的 recipe_items
       const matchingRIs = recipeItems.filter(ri => ri.name === item.name);
 
-      // DEBUG: 临时调试日志
-      if (matchingRIs.length === 0 && !isToBuy) {
-        console.log(`[DEBUG] 食材"${item.name}"没有匹配到任何菜谱食材。recipe_items 中的名称:`, recipeItems.map(ri => ri.name));
-      } else if (matchingRIs.length > 0) {
-        console.log(`[DEBUG] 食材"${item.name}"(qty=${originalQty}, status=${item.status}) 匹配到 ${matchingRIs.length} 个菜谱食材:`, matchingRIs.map(ri => ({ name: ri.name, qty: ri.quantity, recipeId: ri.recipeId })));
-      }
-
       const usages: PantryUsageInfo[] = [];
       let remainingNum = originalParsed?.numerator ?? 0;
       let remainingDen = originalParsed?.denominator ?? 1;
@@ -510,10 +503,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
       for (const ri of matchingRIs) {
         const recipe = recipes.find(r => r.id === ri.recipeId);
-        if (!recipe) {
-          console.log(`[DEBUG] 食材"${item.name}"匹配的 recipeId=${ri.recipeId} 在 recipes 列表中找不到`);
-          continue;
-        }
+        if (!recipe) continue;
 
         const isCompleted = recipe.active === false;
         // 时间判断：只在"新批次"食材上生效（同名有"已用完"记录）
@@ -521,14 +511,9 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         const isNewBatch = usedUpNames.has(item.name);
         const timeSkip = isCompleted && isNewBatch && recipe.completedAt && item.createdAt &&
             new Date(item.createdAt) > new Date(recipe.completedAt);
-        if (timeSkip) {
-          console.log(`[DEBUG] 食材"${item.name}"被时间判断跳过: item.createdAt=${item.createdAt} > recipe.completedAt=${recipe.completedAt} (isNewBatch=${isNewBatch})`);
-          continue;
-        }
+        if (timeSkip) continue;
         const recipeParsed = parseQuantity(ri.quantity);
         const unitsMatch = originalParsed && recipeParsed && originalParsed.unit === recipeParsed.unit;
-
-        console.log(`[DEBUG] 食材"${item.name}" → 菜谱"${recipe.title}": isCompleted=${isCompleted}, isToBuy=${isToBuy}, unitsMatch=${unitsMatch}, originalUnit=${originalParsed?.unit}, recipeUnit=${recipeParsed?.unit}`);
 
         if (isCompleted && !isToBuy && unitsMatch) {
           // 已完成 + 单位一致 + 不是待买 → 扣减
