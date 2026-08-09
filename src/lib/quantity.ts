@@ -52,11 +52,11 @@ export function formatRemaining(num: number, den: number, unit: string, useFract
   return `剩${formatQuantity(num, den, useFraction)}${unit}`;
 }
 
-// 单位匹配：直接相等，或空单位与 g/克 视为等价
-const MASS_UNITS = new Set(['', 'g', '克']);
+// 单位匹配：直接相等；g 与 克 互通（但空单位不算克重，避免"2个"误匹配"2g"）
+const GRAM_UNITS = new Set(['g', '克']);
 export function unitsMatch(a: string, b: string): boolean {
   if (a === b) return true;
-  return MASS_UNITS.has(a) && MASS_UNITS.has(b);
+  return GRAM_UNITS.has(a) && GRAM_UNITS.has(b);
 }
 
 const CHINESE_NUMBERS: Record<string, number> = {
