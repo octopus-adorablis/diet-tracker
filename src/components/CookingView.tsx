@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
   closestCenter, type DragStartEvent, type DragEndEvent,
@@ -35,6 +35,16 @@ export default function CookingView({
   const [newRecipeTitle, setNewRecipeTitle] = useState('');
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
 
+  // 排序：活跃菜谱在上（sortOrder 升序 = 越新越靠上），已完成菜谱沉底
+  const sortedRecipes = useMemo(() => {
+    return [...recipes].sort((a, b) => {
+      const aActive = a.active !== false;
+      const bActive = b.active !== false;
+      if (aActive !== bActive) return aActive ? -1 : 1;
+      return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+    });
+  }, [recipes]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { delay: 250, tolerance: 8 },
@@ -56,13 +66,13 @@ export default function CookingView({
     setActiveDragId(null);
     const { active, over } = e;
     if (!over || active.id === over.id) return;
-    const oldIndex = recipes.findIndex(r => r.id === active.id);
-    const newIndex = recipes.findIndex(r => r.id === over.id);
+    const oldIndex = sortedRecipes.findIndex(r => r.id === active.id);
+    const newIndex = sortedRecipes.findIndex(r => r.id === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
-    onReorderRecipes(recipes, oldIndex, newIndex);
+    onReorderRecipes(sortedRecipes, oldIndex, newIndex);
   };
 
-  const activeDragRecipe = activeDragId ? recipes.find(r => r.id === activeDragId) : null;
+  const activeDragRecipe = activeDragId ? sortedRecipes.find(r => r.id === activeDragId) : null;
 
   return (
     <div className="space-y-4">
@@ -128,8 +138,8 @@ export default function CookingView({
         onDragEnd={handleDragEnd}
         onDragCancel={() => setActiveDragId(null)}
       >
-        <SortableContext items={recipes.map(r => r.id)} strategy={verticalListSortingStrategy}>
-          {recipes.map(recipe => (
+        <SortableContext items={sortedRecipes.map(r => r.id)} strategy={verticalListSortingStrategy}>
+          {sortedRecipes.map(recipe => (
             <SortableRecipeCard
               key={recipe.id}
               recipe={recipe}
@@ -151,7 +161,7 @@ export default function CookingView({
       </DndContext>
 
       {/* 空状态 */}
-      {recipes.length === 0 && !showNewRecipe && (
+      {sortedRecipes.length === 0 && !showNewRecipe && (
         <div className="text-center py-16 text-sage-400">
           <ChefHat size={40} className="mx-auto mb-3 opacity-40" />
           <p className="text-sm">还没有菜谱</p>
@@ -160,7 +170,7 @@ export default function CookingView({
       )}
 
       {/* 底部提示 */}
-      {recipes.length > 0 && (
+      {sortedRecipes.length > 0 && (
         <div className="bg-grape-50 rounded-xl px-4 py-3 flex items-center gap-2.5">
           <div className="w-6 h-6 rounded-full bg-grape-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
             i

@@ -593,9 +593,9 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
   const createRecipe = useCallback(async (title: string): Promise<Recipe | null> => {
     if (!userId) return null;
     if (isDemo || !configured) {
-      const maxOrder = Math.max(0, ...getDemoRecipes().map(r => r.sortOrder ?? 0));
-      const recipe: Recipe = { id: genId(), userId, title, createdAt: new Date().toISOString(), active: true, sortOrder: maxOrder + 1 };
-      const updated = [...getDemoRecipes(), recipe];
+      const minOrder = Math.min(0, ...getDemoRecipes().map(r => r.sortOrder ?? 0));
+      const recipe: Recipe = { id: genId(), userId, title, createdAt: new Date().toISOString(), active: true, sortOrder: minOrder - 1 };
+      const updated = [recipe, ...getDemoRecipes()];
       saveDemoRecipes(updated);
       setRecipes(updated);
       pushUndo(`添加菜谱"${title}"`, async () => {
@@ -605,10 +605,10 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       });
       return recipe;
     }
-    const maxOrder = Math.max(0, ...recipes.map(r => r.sortOrder ?? 0));
-    const result = await addRecipe({ userId, title, sortOrder: maxOrder + 1 });
+    const minOrder = Math.min(0, ...recipes.map(r => r.sortOrder ?? 0));
+    const result = await addRecipe({ userId, title, sortOrder: minOrder - 1 });
     if (result) {
-      setRecipes(prev => [...prev, result]);
+      setRecipes(prev => [result, ...prev]);
       pushUndo(`添加菜谱"${title}"`, async () => {
         await deleteRecipe(result.id);
         setRecipes(prev => prev.filter(r => r.id !== result.id));
