@@ -17,6 +17,7 @@ interface CookingViewProps {
   onCreateRecipe: (title: string) => Promise<Recipe | null>;
   onEditRecipeTitle: (id: string, title: string) => Promise<void>;
   onToggleActive: (id: string) => Promise<void>;
+  onRedoRecipe: (id: string) => Promise<Recipe | null>;
   onDeleteRecipe: (id: string) => Promise<void>;
   onCreateRecipeItem: (recipeId: string, name: string, quantity: string) => Promise<void>;
   onEditRecipeItem: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
@@ -27,7 +28,7 @@ interface CookingViewProps {
 
 export default function CookingView({
   recipes, getRecipeItemsWithMatch,
-  onCreateRecipe, onEditRecipeTitle, onToggleActive, onDeleteRecipe,
+  onCreateRecipe, onEditRecipeTitle, onToggleActive, onRedoRecipe, onDeleteRecipe,
   onCreateRecipeItem, onEditRecipeItem, onDeleteRecipeItem,
   onReorderRecipes, onNavigateToPantry,
 }: CookingViewProps) {
@@ -146,6 +147,7 @@ export default function CookingView({
               items={getRecipeItemsWithMatch(recipe.id)}
               onEditTitle={onEditRecipeTitle}
               onToggleActive={onToggleActive}
+              onRedoRecipe={onRedoRecipe}
               onDelete={onDeleteRecipe}
               onAddItem={onCreateRecipeItem}
               onEditItem={onEditRecipeItem}
@@ -203,12 +205,13 @@ function RecipeCardPreview({ recipe, itemCount }: { recipe: Recipe; itemCount: n
 // ===== 可排序的菜谱卡片（useSortable + SwipeToDelete） =====
 
 function SortableRecipeCard({
-  recipe, items, onEditTitle, onToggleActive, onDelete, onAddItem, onEditItem, onDeleteItem,
+  recipe, items, onEditTitle, onToggleActive, onRedoRecipe, onDelete, onAddItem, onEditItem, onDeleteItem,
 }: {
   recipe: Recipe;
   items: RecipeItemWithMatch[];
   onEditTitle: (id: string, title: string) => Promise<void>;
   onToggleActive: (id: string) => Promise<void>;
+  onRedoRecipe: (id: string) => Promise<Recipe | null>;
   onDelete: (id: string) => Promise<void>;
   onAddItem: (recipeId: string, name: string, quantity: string) => Promise<void>;
   onEditItem: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
@@ -233,6 +236,7 @@ function SortableRecipeCard({
           dragListeners={listeners}
           onEditTitle={onEditTitle}
           onToggleActive={onToggleActive}
+          onRedoRecipe={onRedoRecipe}
           onAddItem={onAddItem}
           onEditItem={onEditItem}
           onDeleteItem={onDeleteItem}
@@ -245,13 +249,14 @@ function SortableRecipeCard({
 // ===== 菜谱卡片内容 =====
 
 function RecipeCard({
-  recipe, items, dragListeners, onEditTitle, onToggleActive, onAddItem, onEditItem, onDeleteItem,
+  recipe, items, dragListeners, onEditTitle, onToggleActive, onRedoRecipe, onAddItem, onEditItem, onDeleteItem,
 }: {
   recipe: Recipe;
   items: RecipeItemWithMatch[];
   dragListeners: ReturnType<typeof useSortable>['listeners'];
   onEditTitle: (id: string, title: string) => Promise<void>;
   onToggleActive: (id: string) => Promise<void>;
+  onRedoRecipe: (id: string) => Promise<Recipe | null>;
   onAddItem: (recipeId: string, name: string, quantity: string) => Promise<void>;
   onEditItem: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDeleteItem: (id: string) => Promise<void>;
@@ -352,8 +357,9 @@ function RecipeCard({
           </button>
         )}
         <button
-          onClick={() => onToggleActive(recipe.id)}
+          onClick={() => onRedoRecipe(recipe.id)}
           onPointerDown={e => e.stopPropagation()}
+          title="复制这份菜谱为全新的待做菜谱"
           className={`h-7 px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors shrink-0 ${
             isActive
               ? 'text-sage-400 hover:bg-sage-100 hover:text-sage-600'

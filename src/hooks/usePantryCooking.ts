@@ -670,6 +670,51 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     });
   }, [recipes, isDemo, configured, pushUndo]);
 
+  // "再做"：基于已完成菜谱生成一份全新的活跃菜谱（同名+同食材清单），原菜谱保留
+  const redoRecipe = useCallback(async (id: string): Promise<Recipe | null> => {
+    const recipe = recipes.find(r => r.id === id);
+    if (!recipe) return null;
+    const sourceItems = recipeItems.filter(ri => ri.recipeId === id);
+
+    if (isDemo || !configured) {
+      const minOrder = Math.min(0, ...getDemoRecipes().map(r => r.sortOrder ?? 0));
+      const newRecipe: Recipe = { id: genId(), userId: recipe.userId, title: recipe.title, createdAt: new Date().toISOString(), active: true, sortOrder: minOrder - 1 };
+      const newItems: RecipeItem[] = sourceItems.map(ri => ({ id: genId(), recipeId: newRecipe.id, name: ri.name, quantity: ri.quantity }));
+      const updatedRecipes = [newRecipe, ...getDemoRecipes()];
+      const updatedItems = [...getDemoRecipeItems(), ...newItems];
+      saveDemoRecipes(updatedRecipes);
+      saveDemoRecipeItems(updatedItems);
+      setRecipes(updatedRecipes);
+      setRecipeItems(updatedItems);
+      pushUndo(`再做"${recipe.title}"`, async () => {
+        const allR = getDemoRecipes().filter(r => r.id !== newRecipe.id);
+        const allI = getDemoRecipeItems().filter(ri => ri.recipeId !== newRecipe.id);
+        saveDemoRecipes(allR);
+        saveDemoRecipeItems(allI);
+        setRecipes(allR);
+        setRecipeItems(allI);
+      });
+      return newRecipe;
+    }
+
+    const minOrder = Math.min(0, ...recipes.map(r => r.sortOrder ?? 0));
+    const newRecipe = await addRecipe({ userId: recipe.userId, title: recipe.title, sortOrder: minOrder - 1 });
+    if (!newRecipe) return null;
+    setRecipes(prev => [newRecipe, ...prev]);
+    const newItems: RecipeItem[] = [];
+    for (const ri of sourceItems) {
+      const created = await addRecipeItem({ recipeId: newRecipe.id, name: ri.name, quantity: ri.quantity });
+      if (created) newItems.push(created);
+    }
+    setRecipeItems(prev => [...prev, ...newItems]);
+    pushUndo(`再做"${recipe.title}"`, async () => {
+      await deleteRecipe(newRecipe.id); // recipe_items 级联删除
+      setRecipes(prev => prev.filter(r => r.id !== newRecipe.id));
+      setRecipeItems(prev => prev.filter(ri => ri.recipeId !== newRecipe.id));
+    });
+    return newRecipe;
+  }, [recipes, recipeItems, isDemo, configured, pushUndo]);
+
   const removeRecipe = useCallback(async (id: string) => {
     const recipe = recipes.find(r => r.id === id);
     const childItems = recipeItems.filter(ri => ri.recipeId === id);
@@ -1036,6 +1081,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     createRecipe,
     editRecipeTitle,
     toggleRecipeActive,
+    redoRecipe,
     removeRecipe,
     reorderRecipes,
     createRecipeItem,
