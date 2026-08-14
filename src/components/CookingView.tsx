@@ -414,14 +414,14 @@ function RecipeCard({
         </div>
       )}
 
-      {/* 已完成菜谱明细（可展开查看，只读） */}
+      {/* 已完成菜谱明细（可展开查看，可双击编辑） */}
       {!isActive && expanded && items.length > 0 && (
         <div className="px-3 py-2 space-y-1 border-t border-sage-100">
           {items.map(item => (
             <RecipeItemRow
               key={item.id}
               item={item}
-              editable={false}
+              editable
               onEdit={onEditItem}
               onDelete={onDeleteItem}
             />
