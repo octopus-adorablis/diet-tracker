@@ -962,6 +962,9 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
           continue;
         }
 
+        // 待买项不显示已完成菜谱的使用记录（那些记录属于已用完的旧食材）
+        if (isCompleted && isToBuy) continue;
+
         const recipeParsed = parseQuantity(ri.quantity);
         const isUnitsMatch = originalParsed && recipeParsed && unitsMatch(originalParsed.unit, recipeParsed.unit);
 
