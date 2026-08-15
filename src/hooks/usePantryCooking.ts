@@ -292,33 +292,43 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         }
       } else {
         // 食材存在 → 检查数量是否足够
-        const matchingItem = pantryItems.find(p => p.status === 'active' && p.name === name);
-        if (!matchingItem) continue;
+        const matchingItems = pantryItems.filter(p => p.status === 'active' && p.name === name);
+        if (matchingItems.length === 0) continue;
 
-        const originalParsed = parseQuantity(matchingItem.originalQuantity || matchingItem.quantity);
-        if (!originalParsed || !unitsMatch(originalParsed.unit, demand.unit)) continue;
+        // 汇总所有同名活跃食材的可用量（原始量 - 已完成菜谱扣减量，与 coveredRecipeItemIds 一致）
+        let availNum = 0;
+        let availDen = 1;
+        let hasAny = false;
+        for (const mi of matchingItems) {
+          const op = parseQuantity(mi.originalQuantity || mi.quantity);
+          if (!op || !unitsMatch(op.unit, demand.unit)) continue;
 
-        // 计算可用量（原始量 - 已完成菜谱扣减量）
-        let availNum = originalParsed.numerator;
-        let availDen = originalParsed.denominator;
+          let remNum = op.numerator;
+          let remDen = op.denominator;
+          const miMatchingRIs = recipeItems.filter(ri => ri.name === name);
+          for (const ri of miMatchingRIs) {
+            const recipe = recipes.find(r => r.id === ri.recipeId);
+            if (!recipe || recipe.active !== false) continue;
 
-        const matchingRIs = recipeItems.filter(ri => ri.name === name);
-        for (const ri of matchingRIs) {
-          const recipe = recipes.find(r => r.id === ri.recipeId);
-          if (!recipe || recipe.active !== false) continue;
+            const isNewBatch = usedUpNames.has(name);
+            const timeSkip = isNewBatch && recipe.completedAt && mi.createdAt &&
+                new Date(mi.createdAt) > new Date(recipe.completedAt);
+            if (timeSkip) continue;
 
-          const isNewBatch = usedUpNames.has(name);
-          const timeSkip = isNewBatch && recipe.completedAt && matchingItem.createdAt &&
-              new Date(matchingItem.createdAt) > new Date(recipe.completedAt);
-          if (timeSkip) continue;
-
-          const recipeParsed = parseQuantity(ri.quantity);
-          if (recipeParsed && unitsMatch(originalParsed.unit, recipeParsed.unit)) {
-            const result = subtractFraction(availNum, availDen, recipeParsed.numerator, recipeParsed.denominator);
-            availNum = result.num;
-            availDen = result.den;
+            const recipeParsed = parseQuantity(ri.quantity);
+            if (recipeParsed && unitsMatch(op.unit, recipeParsed.unit)) {
+              const result = subtractFraction(remNum, remDen, recipeParsed.numerator, recipeParsed.denominator);
+              remNum = result.num;
+              remDen = result.den;
+            }
           }
+
+          const added = addFraction(availNum, availDen, remNum, remDen);
+          availNum = added.num;
+          availDen = added.den;
+          hasAny = true;
         }
+        if (!hasAny) continue;
 
         // 对比活跃菜谱总需求量，计算差额
         const shortfall = subtractFraction(demand.totalNum, demand.totalDen, availNum, availDen);
