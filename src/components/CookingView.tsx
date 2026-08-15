@@ -357,9 +357,9 @@ function RecipeCard({
           </button>
         )}
         <button
-          onClick={() => onRedoRecipe(recipe.id)}
+          onClick={() => isActive ? onToggleActive(recipe.id) : onRedoRecipe(recipe.id)}
           onPointerDown={e => e.stopPropagation()}
-          title="复制这份菜谱为全新的待做菜谱"
+          title={isActive ? '标记为已完成' : '复制这份菜谱为全新的待做菜谱'}
           className={`h-7 px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors shrink-0 ${
             isActive
               ? 'text-sage-400 hover:bg-sage-100 hover:text-sage-600'
