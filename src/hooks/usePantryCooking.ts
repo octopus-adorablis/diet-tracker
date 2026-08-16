@@ -368,8 +368,8 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     const category = autoCategorize(name);
     if (isDemo || !configured) {
       const existing = getDemoPantry();
-      const maxOrder = Math.max(0, ...existing.filter(p => p.status === 'active').map(p => p.sortOrder ?? 0));
-      const item: PantryItem = { id: genId(), userId, name, quantity, status, category, createdAt: new Date().toISOString(), sortOrder: status === 'active' ? maxOrder + 1 : 0, originalQuantity: quantity };
+      const minOrder = Math.min(0, ...existing.filter(p => p.status === 'active').map(p => p.sortOrder ?? 0));
+      const item: PantryItem = { id: genId(), userId, name, quantity, status, category, createdAt: new Date().toISOString(), sortOrder: status === 'active' ? minOrder - 1 : 0, originalQuantity: quantity };
       const updated = [...existing, item];
       saveDemoPantry(updated);
       setPantryItems(updated);
@@ -380,8 +380,8 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       });
       return;
     }
-    const maxOrder = Math.max(0, ...pantryItems.filter(p => p.status === 'active').map(p => p.sortOrder ?? 0));
-    const result = await addPantryItem({ userId, name, quantity, status, category, sortOrder: status === 'active' ? maxOrder + 1 : 0 });
+    const minOrder = Math.min(0, ...pantryItems.filter(p => p.status === 'active').map(p => p.sortOrder ?? 0));
+    const result = await addPantryItem({ userId, name, quantity, status, category, sortOrder: status === 'active' ? minOrder - 1 : 0 });
     if (result) {
       setPantryItems(prev => [...prev, result]);
       pushUndo(`添加"${name}"`, async () => {
