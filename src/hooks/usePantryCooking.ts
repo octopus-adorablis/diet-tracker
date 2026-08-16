@@ -24,6 +24,24 @@ function isSupabaseConfigured(): boolean {
 
 // ===== 食材自动分类 =====
 // 根据食材名称关键词自动判断分类，按优先级匹配
+// 已知容易被关键词误判的食材（含肉/海鲜/蛋等关键字但实际不属于肉类）
+// 优先级最高，匹配到就直接返回正确分类
+const KNOWN_OVERRIDES: Array<{ pattern: string; category: PantryCategory }> = [
+  // 菌菇类——名字含"鸡/蟹"等字但实际是蔬菜
+  { pattern: '鸡枞', category: 'vegetable' },
+  { pattern: '鸡纵', category: 'vegetable' },
+  { pattern: '蟹味菇', category: 'vegetable' },
+  { pattern: '蟹味蘑菇', category: 'vegetable' },
+  { pattern: '蟹菇', category: 'vegetable' },
+  // 野菜/草药——名字含"鱼/猪/羊"等字
+  { pattern: '鱼腥草', category: 'vegetable' },
+  { pattern: '羊栖菜', category: 'vegetable' },
+  { pattern: '猪毛菜', category: 'vegetable' },
+  { pattern: '龙须菜', category: 'vegetable' },
+  // 水果——名字含"蛋"字
+  { pattern: '鸡蛋果', category: 'other' },
+];
+
 const MEAT_DAIRY_KEYWORDS = [
   // 禽肉
   '鸡', '鸭', '鹅', '鸽', '鹌鹑',
@@ -52,7 +70,12 @@ function autoCategorize(name: string): PantryCategory {
   const lower = name.trim();
   if (!lower) return 'other';
 
-  // 按优先级匹配：肉蛋奶 → 蔬菜 → 主食 → 其他
+  // 1. 优先检查已知例外（防止关键词误判，如"黑皮鸡枞"含"鸡"但实际是菌菇）
+  for (const override of KNOWN_OVERRIDES) {
+    if (lower.includes(override.pattern)) return override.category;
+  }
+
+  // 2. 按优先级匹配：肉蛋奶 → 蔬菜 → 主食 → 其他
   if (MEAT_DAIRY_KEYWORDS.some(kw => lower.includes(kw))) return 'meat_dairy';
   if (VEGETABLE_KEYWORDS.some(kw => lower.includes(kw))) return 'vegetable';
   if (STAPLE_KEYWORDS.some(kw => lower.includes(kw))) return 'staple';
