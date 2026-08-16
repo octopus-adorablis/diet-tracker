@@ -68,7 +68,20 @@ const STAPLE_KEYWORDS = [
   '大米', '糯米', '小米', '糙米', '燕麦', '荞麦', '藜麦', '面粉', '面条', '挂面', '意面', '面包', '馒头', '包子', '饺子', '馄饨', '饼', '年糕', '米粉', '粉丝', '米饭', '粥', '红豆', '绿豆', '黄豆', '黑豆', '花生', '芝麻', '麻油', '河粉', '通心粉', '宽粉', '红薯粉', '绿豆粉',
   // 高碳水蔬菜归主食
   '土豆', '玉米', '藕', '莲藕', '山药', '红薯', '紫薯', '豌豆',
+  // 高碳水豆类
+  '鹰嘴豆',
 ];
+
+// 同义词归一化：不同写法的同一食材视为同一个，用于食材库与菜谱的匹配
+// 键=别名，值=标准名（匹配时统一映射到标准名比较）
+const NAME_SYNONYMS: Record<string, string> = {
+  '西红柿': '番茄',
+  '圣女果': '小番茄',
+};
+function canonicalName(name: string): string {
+  const trimmed = name.trim();
+  return NAME_SYNONYMS[trimmed] ?? trimmed;
+}
 
 function autoCategorize(name: string): PantryCategory {
   const lower = name.trim();
@@ -264,7 +277,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     const existingNames = new Set(
       pantryItems
         .filter(p => p.status === 'active' || p.status === 'to_buy')
-        .map(p => p.name)
+        .map(p => canonicalName(p.name))
     );
     // 只考虑激活中的菜谱（已关闭的菜谱不再提示买菜）
     const activeRecipeIds = new Set(recipes.filter(r => r.active !== false).map(r => r.id));
@@ -274,16 +287,17 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     // 预计算 usedUpNames（与 pantryDisplayMap 逻辑一致）
     const usedUpNames = new Set<string>();
     for (const p of pantryItems) {
-      if (p.status === 'checked') usedUpNames.add(p.name);
+      if (p.status === 'checked') usedUpNames.add(canonicalName(p.name));
     }
 
-    // 按名称分组：活跃菜谱的总需求量
+    // 按名称分组：活跃菜谱的总需求量（名称归一化，番茄/西红柿视为同一食材）
     const activeDemandMap = new Map<string, { totalNum: number; totalDen: number; unit: string; isFraction: boolean }>();
     for (const ri of recipeItems) {
       if (!activeRecipeIds.has(ri.recipeId)) continue;
       const parsed = parseQuantity(ri.quantity);
       if (!parsed) continue;
-      const existing = activeDemandMap.get(ri.name);
+      const cName = canonicalName(ri.name);
+      const existing = activeDemandMap.get(cName);
         if (existing) {
           if (unitsMatch(existing.unit, parsed.unit)) {
             const added = addFraction(existing.totalNum, existing.totalDen, parsed.numerator, parsed.denominator);
@@ -292,7 +306,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
             existing.isFraction = existing.isFraction || parsed.isFraction || parsed.isHalf;
           }
         } else {
-        activeDemandMap.set(ri.name, {
+        activeDemandMap.set(cName, {
           totalNum: parsed.numerator,
           totalDen: parsed.denominator,
           unit: parsed.unit,
@@ -319,7 +333,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         }
       } else {
         // 食材存在 → 检查数量是否足够
-        const matchingItems = pantryItems.filter(p => p.status === 'active' && p.name === name);
+        const matchingItems = pantryItems.filter(p => p.status === 'active' && canonicalName(p.name) === name);
         if (matchingItems.length === 0) continue;
 
         // 汇总所有同名活跃食材的可用量（原始量 - 已完成菜谱扣减量，与 coveredRecipeItemIds 一致）
@@ -332,7 +346,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
           let remNum = op.numerator;
           let remDen = op.denominator;
-          const miMatchingRIs = recipeItems.filter(ri => ri.name === name);
+          const miMatchingRIs = recipeItems.filter(ri => canonicalName(ri.name) === name);
           for (const ri of miMatchingRIs) {
             const recipe = recipes.find(r => r.id === ri.recipeId);
             if (!recipe || recipe.active !== false) continue;
@@ -912,7 +926,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     // 没有"已用完"记录意味着这是原始批次，应匹配所有已完成菜谱
     const usedUpNames = new Set<string>();
     for (const p of allPantryItems) {
-      if (p.status === 'checked') usedUpNames.add(p.name);
+      if (p.status === 'checked') usedUpNames.add(canonicalName(p.name));
     }
 
     // 预计算：哪些活跃菜谱食材已被真实活跃食材"覆盖"（虚拟扣减后够用）
@@ -927,11 +941,11 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       // 先扣减已完成菜谱（与主循环逻辑一致）
       let remNum = origParsed.numerator;
       let remDen = origParsed.denominator;
-      const itemMatchingRIs = recipeItems.filter(ri => ri.name === item.name);
+      const itemMatchingRIs = recipeItems.filter(ri => canonicalName(ri.name) === canonicalName(item.name));
       for (const ri of itemMatchingRIs) {
         const recipe = recipes.find(r => r.id === ri.recipeId);
         if (!recipe || recipe.active !== false) continue;
-        const isNewBatch = usedUpNames.has(item.name);
+        const isNewBatch = usedUpNames.has(canonicalName(item.name));
         const timeSkip = isNewBatch && recipe.completedAt && item.createdAt &&
             new Date(item.createdAt) > new Date(recipe.completedAt);
         if (timeSkip) continue;
@@ -969,7 +983,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       const originalParsed = parseQuantity(originalQty);
 
       // 找到所有匹配此食材的 recipe_items
-      const matchingRIs = recipeItems.filter(ri => ri.name === item.name);
+      const matchingRIs = recipeItems.filter(ri => canonicalName(ri.name) === canonicalName(item.name));
 
       const usages: PantryUsageInfo[] = [];
       let remainingNum = originalParsed?.numerator ?? 0;
@@ -988,7 +1002,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         const isCompleted = recipe.active === false;
         // 时间判断：只在"新批次"食材上生效（同名有"已用完"记录）
         // 原始批次（没有"已用完"的）不需要时间判断，应匹配所有已完成菜谱
-        const isNewBatch = usedUpNames.has(item.name);
+        const isNewBatch = usedUpNames.has(canonicalName(item.name));
         const timeSkip = isCompleted && isNewBatch && recipe.completedAt && item.createdAt &&
             new Date(item.createdAt) > new Date(recipe.completedAt);
         if (timeSkip) continue;
@@ -1091,7 +1105,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
     return recipeItems.map(ri => {
       const matched = activeNames.has(ri.name);
-      const matchedPantryItem = pantryItems.find(p => p.status === 'active' && p.name === ri.name);
+      const matchedPantryItem = pantryItems.find(p => p.status === 'active' && canonicalName(p.name) === canonicalName(ri.name));
       return {
         ...ri,
         matchStatus: matched ? 'matched' as const : 'to_buy' as const,
