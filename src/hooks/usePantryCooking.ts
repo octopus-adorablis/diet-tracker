@@ -11,6 +11,7 @@ import {
   parseQuantity, formatRemaining, formatQuantity,
   addFraction, subtractFraction, unitsMatch,
 } from '../lib/quantity';
+import { canonicalName, allocateCompletedUsage } from '../lib/pantry-allocation';
 import type { PantryItem, Recipe, RecipeItem, RecipeItemWithMatch, PantryStatus, PantryCategory, PantryUsageInfo, PantryDisplayInfo } from '../types';
 
 const DEMO_PANTRY_KEY = 'diet_tracker_demo_pantry';
@@ -72,16 +73,8 @@ const STAPLE_KEYWORDS = [
   '鹰嘴豆',
 ];
 
-// 同义词归一化：不同写法的同一食材视为同一个，用于食材库与菜谱的匹配
-// 键=别名，值=标准名（匹配时统一映射到标准名比较）
-const NAME_SYNONYMS: Record<string, string> = {
-  '西红柿': '番茄',
-  '圣女果': '小番茄',
-};
-function canonicalName(name: string): string {
-  const trimmed = name.trim();
-  return NAME_SYNONYMS[trimmed] ?? trimmed;
-}
+// 同义词归一化（canonicalName）与已完成菜谱的 FIFO 分摊逻辑
+// 已抽取到 src/lib/pantry-allocation.ts，供本文件与测试共用
 
 function autoCategorize(name: string): PantryCategory {
   const lower = name.trim();
@@ -271,6 +264,13 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  // ===== 实时计算：已完成菜谱用量的 FIFO 分摊 =====
+  // 每份已完成菜谱的用量只扣一次：按购买时间先扣最早的批次，
+  // 且只由菜谱完成前就已存在的批次承担（修复同名多批次重复扣减的 bug）
+  const completedAllocations = useMemo(() => {
+    return allocateCompletedUsage(pantryItems, recipeItems, recipes);
+  }, [pantryItems, recipeItems, recipes]);
+
   // ===== 实时计算：虚拟待买项 =====
   // 菜谱食材中，未匹配到任何现有/待买食材的，自动生成虚拟待买项
   const virtualToBuyItems = useMemo(() => {
@@ -283,12 +283,6 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     const activeRecipeIds = new Set(recipes.filter(r => r.active !== false).map(r => r.id));
     const virtualItems: PantryItem[] = [];
     const seenNames = new Set<string>();
-
-    // 预计算 usedUpNames（与 pantryDisplayMap 逻辑一致）
-    const usedUpNames = new Set<string>();
-    for (const p of pantryItems) {
-      if (p.status === 'checked') usedUpNames.add(canonicalName(p.name));
-    }
 
     // 按名称分组：活跃菜谱的总需求量（名称归一化，番茄/西红柿视为同一食材）
     const activeDemandMap = new Map<string, { totalNum: number; totalDen: number; unit: string; isFraction: boolean }>();
@@ -336,7 +330,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         const matchingItems = pantryItems.filter(p => p.status === 'active' && canonicalName(p.name) === name);
         if (matchingItems.length === 0) continue;
 
-        // 汇总所有同名活跃食材的可用量（原始量 - 已完成菜谱扣减量，与 coveredRecipeItemIds 一致）
+        // 汇总所有同名活跃食材的可用量（原始量 - FIFO 分摊到的已完成菜谱扣减量）
         let availNum = 0;
         let availDen = 1;
         let hasAny = false;
@@ -346,22 +340,11 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
           let remNum = op.numerator;
           let remDen = op.denominator;
-          const miMatchingRIs = recipeItems.filter(ri => canonicalName(ri.name) === name);
-          for (const ri of miMatchingRIs) {
-            const recipe = recipes.find(r => r.id === ri.recipeId);
-            if (!recipe || recipe.active !== false) continue;
-
-            const isNewBatch = usedUpNames.has(name);
-            const timeSkip = isNewBatch && recipe.completedAt && mi.createdAt &&
-                new Date(mi.createdAt) > new Date(recipe.completedAt);
-            if (timeSkip) continue;
-
-            const recipeParsed = parseQuantity(ri.quantity);
-            if (recipeParsed && unitsMatch(op.unit, recipeParsed.unit)) {
-              const result = subtractFraction(remNum, remDen, recipeParsed.numerator, recipeParsed.denominator);
-              remNum = result.num;
-              remDen = result.den;
-            }
+          const alloc = completedAllocations.deductions.get(mi.id);
+          if (alloc) {
+            const r = subtractFraction(remNum, remDen, alloc.num, alloc.den);
+            remNum = r.num;
+            remDen = r.den;
           }
 
           const added = addFraction(availNum, availDen, remNum, remDen);
@@ -392,7 +375,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     }
 
     return virtualItems;
-  }, [pantryItems, recipeItems, recipes, userId]);
+  }, [pantryItems, recipeItems, recipes, userId, completedAllocations]);
 
   // 合并所有食材（现有 + 待买 + 已用完 + 虚拟待买），兜底旧数据缺失的 category
   const allPantryItems = useMemo(() => {
@@ -907,23 +890,15 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
   // ===== 实时计算：食材显示信息 =====
   // 根据菜谱状态实时计算每个食材的剩余量和使用记录
-  // 已完成菜谱 + 单位一致 → 从原始数量扣减
+  // 已完成菜谱：用量按 FIFO 分摊到同名各批次，每份用量只扣一次（见 pantry-allocation.ts）
   // 已完成菜谱 + 单位不一致 → 标注"已用"
   // 活跃菜谱 → 标注"需用"，不扣减
   const pantryDisplayMap = useMemo(() => {
     const map = new Map<string, PantryDisplayInfo>();
-
-    // 活跃食材按名称索引（取第一个匹配的）
-    const activeByName = new Map<string, PantryItem>();
-    for (const p of allPantryItems) {
-      if (p.status === 'active' && !activeByName.has(p.name)) {
-        activeByName.set(p.name, p);
-      }
-    }
+    const { deductions: allocDeductions, allocatedRecipeItemIds, insufficientIds } = completedAllocations;
 
     // 预计算：哪些食材名称有"已用完"记录
-    // 有"已用完"记录意味着当前活跃的是"新批次"，需要时间判断防止误匹配旧菜谱
-    // 没有"已用完"记录意味着这是原始批次，应匹配所有已完成菜谱
+    // 用于展示层过滤：新批次不显示历史菜谱的"已用"标注
     const usedUpNames = new Set<string>();
     for (const p of allPantryItems) {
       if (p.status === 'checked') usedUpNames.add(canonicalName(p.name));
@@ -938,28 +913,20 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       const origParsed = parseQuantity(item.originalQuantity || item.quantity);
       if (!origParsed) continue;
 
-      // 先扣减已完成菜谱（与主循环逻辑一致）
+      // FIFO 分摊后该批次的剩余量
       let remNum = origParsed.numerator;
       let remDen = origParsed.denominator;
-      const itemMatchingRIs = recipeItems.filter(ri => canonicalName(ri.name) === canonicalName(item.name));
-      for (const ri of itemMatchingRIs) {
-        const recipe = recipes.find(r => r.id === ri.recipeId);
-        if (!recipe || recipe.active !== false) continue;
-        const isNewBatch = usedUpNames.has(canonicalName(item.name));
-        const timeSkip = isNewBatch && recipe.completedAt && item.createdAt &&
-            new Date(item.createdAt) > new Date(recipe.completedAt);
-        if (timeSkip) continue;
-        const rp = parseQuantity(ri.quantity);
-        if (rp && unitsMatch(origParsed.unit, rp.unit)) {
-          const r = subtractFraction(remNum, remDen, rp.numerator, rp.denominator);
-          remNum = r.num;
-          remDen = r.den;
-        }
+      const alloc = allocDeductions.get(item.id);
+      if (alloc) {
+        const r = subtractFraction(remNum, remDen, alloc.num, alloc.den);
+        remNum = r.num;
+        remDen = r.den;
       }
 
       // 再虚拟扣减活跃菜谱，标记"覆盖"的 recipe item
       let actRemNum = remNum;
       let actRemDen = remDen;
+      const itemMatchingRIs = recipeItems.filter(ri => canonicalName(ri.name) === canonicalName(item.name));
       for (const ri of itemMatchingRIs) {
         if (coveredRecipeItemIds.has(ri.id)) continue; // 已被其他食材覆盖
         const recipe = recipes.find(r => r.id === ri.recipeId);
@@ -995,13 +962,24 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       const unit = originalParsed?.unit || '';
       let insufficient = false;
 
+      // 已完成菜谱用量的 FIFO 分摊扣减：该批次实际承担的量（每份用量只扣一次）
+      const allocDeduct = allocDeductions.get(item.id);
+      if (allocDeduct) {
+        const result = subtractFraction(remainingNum, remainingDen, allocDeduct.num, allocDeduct.den);
+        remainingNum = result.num;
+        remainingDen = result.den;
+        activeRemainingNum = remainingNum;
+        activeRemainingDen = remainingDen;
+        if (insufficientIds.has(item.id)) insufficient = true;
+      }
+
       for (const ri of matchingRIs) {
         const recipe = recipes.find(r => r.id === ri.recipeId);
         if (!recipe) continue;
 
         const isCompleted = recipe.active === false;
         // 时间判断：只在"新批次"食材上生效（同名有"已用完"记录）
-        // 原始批次（没有"已用完"的）不需要时间判断，应匹配所有已完成菜谱
+        // 仅用于展示层过滤"已用"标注（扣减本身已由 FIFO 分摊按时间先后处理）
         const isNewBatch = usedUpNames.has(canonicalName(item.name));
         const timeSkip = isCompleted && isNewBatch && recipe.completedAt && item.createdAt &&
             new Date(item.createdAt) > new Date(recipe.completedAt);
@@ -1019,31 +997,30 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         const recipeParsed = parseQuantity(ri.quantity);
         const isUnitsMatch = originalParsed && recipeParsed && unitsMatch(originalParsed.unit, recipeParsed.unit);
 
-        if (isCompleted && !isToBuy && isUnitsMatch) {
-          // 已完成 + 单位一致 + 不是待买 → 扣减
-          const result = subtractFraction(remainingNum, remainingDen, recipeParsed.numerator, recipeParsed.denominator);
-          if (result.num < 0) insufficient = true;
-          remainingNum = result.num;
-          remainingDen = result.den;
-          activeRemainingNum = remainingNum;
-          activeRemainingDen = remainingDen;
-          useFraction = useFraction || recipeParsed.isFraction || recipeParsed.isHalf;
-          usages.push({
-            recipeId: recipe.id,
-            recipeTitle: recipe.title,
-            quantity: ri.quantity,
-            status: 'used',
-            deducted: true,
-          });
-        } else if (isCompleted) {
-          // 已完成但单位不一致（或待买项） → 标注"已用"但不扣减
-          usages.push({
-            recipeId: recipe.id,
-            recipeTitle: recipe.title,
-            quantity: ri.quantity,
-            status: 'used',
-            deducted: false,
-          });
+        if (isCompleted) {
+          // 已完成菜谱：只有 FIFO 分摊到该批次上的用量才显示并计入扣减
+          const allocated = !isToBuy && allocatedRecipeItemIds.get(item.id)?.has(ri.id);
+          if (allocated && recipeParsed) {
+            // 该批次实际承担了这次扣减（量已在上面统一减去）
+            useFraction = useFraction || recipeParsed.isFraction || recipeParsed.isHalf;
+            usages.push({
+              recipeId: recipe.id,
+              recipeTitle: recipe.title,
+              quantity: ri.quantity,
+              status: 'used',
+              deducted: true,
+            });
+          } else if (!isUnitsMatch) {
+            // 已完成但单位不一致 → 标注"已用"但不扣减
+            usages.push({
+              recipeId: recipe.id,
+              recipeTitle: recipe.title,
+              quantity: ri.quantity,
+              status: 'used',
+              deducted: false,
+            });
+          }
+          // 单位一致但用量分摊给了更早的批次 → 不在此批次重复显示，避免重复扣减的错觉
         } else if (!isToBuy && isUnitsMatch) {
           // 活跃菜谱 + 单位一致 → 虚拟扣减，判断够不够
           const result = subtractFraction(activeRemainingNum, activeRemainingDen, recipeParsed.numerator, recipeParsed.denominator);
@@ -1091,7 +1068,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     }
 
     return map;
-  }, [allPantryItems, recipeItems, recipes]);
+  }, [allPantryItems, recipeItems, recipes, completedAllocations]);
 
   const getPantryDisplay = useCallback((pantryItemId: string): PantryDisplayInfo => {
     return pantryDisplayMap.get(pantryItemId) || { displayQuantity: '', usages: [], insufficient: false };
