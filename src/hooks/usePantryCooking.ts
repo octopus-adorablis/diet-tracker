@@ -1076,12 +1076,13 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
   // ===== 实时计算：菜谱食材匹配状态 =====
   const recipeItemMatches = useMemo(() => {
+    // 同义词归一化：番茄/西红柿、圣女果/小番茄 视为同一食材（见 canonicalName）
     const activeNames = new Set(
-      pantryItems.filter(p => p.status === 'active').map(p => p.name)
+      pantryItems.filter(p => p.status === 'active').map(p => canonicalName(p.name))
     );
 
     return recipeItems.map(ri => {
-      const matched = activeNames.has(ri.name);
+      const matched = activeNames.has(canonicalName(ri.name));
       const matchedPantryItem = pantryItems.find(p => p.status === 'active' && canonicalName(p.name) === canonicalName(ri.name));
       return {
         ...ri,
