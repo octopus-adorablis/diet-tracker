@@ -11,7 +11,7 @@ import {
   parseQuantity, formatRemaining, formatQuantity,
   addFraction, subtractFraction, unitsMatch,
 } from '../lib/quantity';
-import { canonicalName, allocateCompletedUsage } from '../lib/pantry-allocation';
+import { canonicalName, allocateCompletedUsage, buildVirtualToBuyItems } from '../lib/pantry-allocation';
 import type { PantryItem, Recipe, RecipeItem, RecipeItemWithMatch, PantryStatus, PantryCategory, PantryUsageInfo, PantryDisplayInfo } from '../types';
 
 const DEMO_PANTRY_KEY = 'diet_tracker_demo_pantry';
@@ -273,108 +273,9 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
 
   // ===== 实时计算：虚拟待买项 =====
   // 菜谱食材中，未匹配到任何现有/待买食材的，自动生成虚拟待买项
+  // （逻辑已抽取到 src/lib/pantry-allocation.ts 的 buildVirtualToBuyItems，便于测试）
   const virtualToBuyItems = useMemo(() => {
-    const existingNames = new Set(
-      pantryItems
-        .filter(p => p.status === 'active' || p.status === 'to_buy')
-        .map(p => canonicalName(p.name))
-    );
-    // 只考虑激活中的菜谱（已关闭的菜谱不再提示买菜）
-    const activeRecipeIds = new Set(recipes.filter(r => r.active !== false).map(r => r.id));
-    const virtualItems: PantryItem[] = [];
-    const seenNames = new Set<string>();
-
-    // 按名称分组：活跃菜谱的总需求量（名称归一化，番茄/西红柿视为同一食材）
-    const activeDemandMap = new Map<string, { totalNum: number; totalDen: number; unit: string; isFraction: boolean }>();
-    for (const ri of recipeItems) {
-      if (!activeRecipeIds.has(ri.recipeId)) continue;
-      const parsed = parseQuantity(ri.quantity);
-      if (!parsed) continue;
-      const cName = canonicalName(ri.name);
-      const existing = activeDemandMap.get(cName);
-        if (existing) {
-          if (unitsMatch(existing.unit, parsed.unit)) {
-            const added = addFraction(existing.totalNum, existing.totalDen, parsed.numerator, parsed.denominator);
-            existing.totalNum = added.num;
-            existing.totalDen = added.den;
-            existing.isFraction = existing.isFraction || parsed.isFraction || parsed.isHalf;
-          }
-        } else {
-        activeDemandMap.set(cName, {
-          totalNum: parsed.numerator,
-          totalDen: parsed.denominator,
-          unit: parsed.unit,
-          isFraction: parsed.isFraction || parsed.isHalf,
-        });
-      }
-    }
-
-    for (const [name, demand] of activeDemandMap) {
-      if (!existingNames.has(name)) {
-        // 食材不存在 → 生成虚拟待买项（总需求量）
-        if (!seenNames.has(name)) {
-          seenNames.add(name);
-          virtualItems.push({
-            id: `virtual-${name}`,
-            userId: userId || '',
-            name,
-            quantity: formatQuantity(demand.totalNum, demand.totalDen, demand.isFraction) + demand.unit,
-            status: 'to_buy' as PantryStatus,
-            category: autoCategorize(name),
-            createdAt: '',
-            isVirtual: true,
-          });
-        }
-      } else {
-        // 食材存在 → 检查数量是否足够
-        const matchingItems = pantryItems.filter(p => p.status === 'active' && canonicalName(p.name) === name);
-        if (matchingItems.length === 0) continue;
-
-        // 汇总所有同名活跃食材的可用量（原始量 - FIFO 分摊到的已完成菜谱扣减量）
-        let availNum = 0;
-        let availDen = 1;
-        let hasAny = false;
-        for (const mi of matchingItems) {
-          const op = parseQuantity(mi.originalQuantity || mi.quantity);
-          if (!op || !unitsMatch(op.unit, demand.unit)) continue;
-
-          let remNum = op.numerator;
-          let remDen = op.denominator;
-          const alloc = completedAllocations.deductions.get(mi.id);
-          if (alloc) {
-            const r = subtractFraction(remNum, remDen, alloc.num, alloc.den);
-            remNum = r.num;
-            remDen = r.den;
-          }
-
-          const added = addFraction(availNum, availDen, remNum, remDen);
-          availNum = added.num;
-          availDen = added.den;
-          hasAny = true;
-        }
-        if (!hasAny) continue;
-
-        // 对比活跃菜谱总需求量，计算差额
-        const shortfall = subtractFraction(demand.totalNum, demand.totalDen, availNum, availDen);
-        if (shortfall.num > 0) {
-          if (!seenNames.has(name)) {
-            seenNames.add(name);
-            virtualItems.push({
-              id: `virtual-shortfall-${name}`,
-              userId: userId || '',
-              name,
-              quantity: formatQuantity(shortfall.num, shortfall.den, demand.isFraction) + demand.unit,
-              status: 'to_buy' as PantryStatus,
-              category: autoCategorize(name),
-              createdAt: '',
-              isVirtual: true,
-            });
-          }
-        }
-      }
-    }
-
-    return virtualItems;
+    return buildVirtualToBuyItems(pantryItems, recipeItems, recipes, completedAllocations, autoCategorize, userId || '');
   }, [pantryItems, recipeItems, recipes, userId, completedAllocations]);
 
   // 合并所有食材（现有 + 待买 + 已用完 + 虚拟待买），兜底旧数据缺失的 category

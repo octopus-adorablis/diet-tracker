@@ -3,8 +3,8 @@
 // 导致同名食材存在多条记录（多批次）时重复扣减——新买的食材也会被历史菜谱扣到 0。
 // 正确语义：每份用量只扣一次，按购买时间（createdAt 升序）先扣最早的批次（FIFO），
 // 且只有「菜谱完成之前就已存在」的批次才承担该次扣减（之后买的是新批次）。
-import type { PantryItem, Recipe, RecipeItem } from '../types';
-import { parseQuantity, unitsMatch, addFraction, subtractFraction } from './quantity';
+import type { PantryItem, Recipe, RecipeItem, PantryStatus, PantryCategory } from '../types';
+import { parseQuantity, formatQuantity, unitsMatch, addFraction, subtractFraction } from './quantity';
 
 // 同义词归一化：不同写法的同一食材视为同一个，用于食材库与菜谱的匹配
 // 键=别名，值=标准名（匹配时统一映射到标准名比较）
@@ -133,4 +133,132 @@ export function allocateCompletedUsage(
   }
 
   return { deductions, allocatedRecipeItemIds, insufficientIds };
+}
+
+// ===== 虚拟待买项：根据活跃菜谱的食材需求，自动生成「待购买」清单 =====
+// 修复 bug：旧逻辑对无法解析数量的食材（适量/少许/若干/留空）直接跳过，
+// 导致这类食材不会出现在食材库「待购买」里。
+// 现在：解析不到数字的食材按「定性用量」处理——只要食材库里没有，就生成待购买项，
+// 数量为原始文本（如「适量」），让用户不会漏买。
+interface Demand {
+  totalNum: number;
+  totalDen: number;
+  unit: string;
+  isFraction: boolean;
+  qualitative: boolean; // 是否含有无法解析数量的条目（适量/少许等）
+  rawText: string;      // 定性用量时展示的原始文本
+}
+
+export function buildVirtualToBuyItems(
+  pantryItems: PantryItem[],
+  recipeItems: RecipeItem[],
+  recipes: Recipe[],
+  completedAllocations: CompletedAllocations,
+  autoCategorize: (name: string) => PantryCategory,
+  userId: string = '',
+): PantryItem[] {
+  const existingNames = new Set(
+    pantryItems
+      .filter(p => p.status === 'active' || p.status === 'to_buy')
+      .map(p => canonicalName(p.name))
+  );
+  const activeRecipeIds = new Set(recipes.filter(r => r.active !== false).map(r => r.id));
+  const virtualItems: PantryItem[] = [];
+  const seenNames = new Set<string>();
+
+  // 按归一化名称汇总：活跃菜谱对每种食材的总需求量
+  const activeDemandMap = new Map<string, Demand>();
+  for (const ri of recipeItems) {
+    if (!activeRecipeIds.has(ri.recipeId)) continue;
+    const parsed = parseQuantity(ri.quantity);
+    const cName = canonicalName(ri.name);
+    const existing = activeDemandMap.get(cName);
+    if (existing) {
+      if (parsed && unitsMatch(existing.unit, parsed.unit)) {
+        const added = addFraction(existing.totalNum, existing.totalDen, parsed.numerator, parsed.denominator);
+        existing.totalNum = added.num;
+        existing.totalDen = added.den;
+        existing.isFraction = existing.isFraction || parsed.isFraction || parsed.isHalf;
+      }
+      if (!parsed) existing.qualitative = true;
+    } else {
+      activeDemandMap.set(cName, {
+        totalNum: parsed?.numerator ?? 0,
+        totalDen: parsed?.denominator ?? 1,
+        unit: parsed?.unit ?? '',
+        isFraction: parsed?.isFraction || parsed?.isHalf || false,
+        qualitative: !parsed,
+        rawText: ri.quantity?.trim() || '适量',
+      });
+    }
+  }
+
+  for (const [name, demand] of activeDemandMap) {
+    if (!existingNames.has(name)) {
+      // 食材不存在 → 生成虚拟待买项
+      if (!seenNames.has(name)) {
+        seenNames.add(name);
+        const qtyText = demand.qualitative
+          ? demand.rawText
+          : formatQuantity(demand.totalNum, demand.totalDen, demand.isFraction) + demand.unit;
+        virtualItems.push({
+          id: `virtual-${name}`,
+          userId,
+          name,
+          quantity: qtyText,
+          status: 'to_buy' as PantryStatus,
+          category: autoCategorize(name),
+          createdAt: '',
+          isVirtual: true,
+        });
+      }
+    } else {
+      // 食材存在 → 若用量为定性（适量/少许）则默认已有，不提示购买
+      if (demand.qualitative) continue;
+      const matchingItems = pantryItems.filter(p => p.status === 'active' && canonicalName(p.name) === name);
+      if (matchingItems.length === 0) continue;
+
+      let availNum = 0;
+      let availDen = 1;
+      let hasAny = false;
+      for (const mi of matchingItems) {
+        const op = parseQuantity(mi.originalQuantity || mi.quantity);
+        if (!op || !unitsMatch(op.unit, demand.unit)) continue;
+
+        let remNum = op.numerator;
+        let remDen = op.denominator;
+        const alloc = completedAllocations.deductions.get(mi.id);
+        if (alloc) {
+          const r = subtractFraction(remNum, remDen, alloc.num, alloc.den);
+          remNum = r.num;
+          remDen = r.den;
+        }
+
+        const added = addFraction(availNum, availDen, remNum, remDen);
+        availNum = added.num;
+        availDen = added.den;
+        hasAny = true;
+      }
+      if (!hasAny) continue;
+
+      const shortfall = subtractFraction(demand.totalNum, demand.totalDen, availNum, availDen);
+      if (shortfall.num > 0) {
+        if (!seenNames.has(name)) {
+          seenNames.add(name);
+          virtualItems.push({
+            id: `virtual-shortfall-${name}`,
+            userId,
+            name,
+            quantity: formatQuantity(shortfall.num, shortfall.den, demand.isFraction) + demand.unit,
+            status: 'to_buy' as PantryStatus,
+            category: autoCategorize(name),
+            createdAt: '',
+            isVirtual: true,
+          });
+        }
+      }
+    }
+  }
+
+  return virtualItems;
 }
