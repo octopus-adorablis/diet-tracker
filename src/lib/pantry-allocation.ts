@@ -262,3 +262,51 @@ export function buildVirtualToBuyItems(
 
   return virtualItems;
 }
+
+// ===== 活跃菜谱的「需用」需求收集 =====
+// 修复 bug：旧逻辑只在「虚拟扣减后剩余量 >= 0」时才把活跃菜谱列入食材详情页的「需用」列表，
+// 导致排在后面的菜谱（即使食材库里已有）被隐藏，出现「做菜页显示已有，食材详情页却看不到」
+// 的不一致。正确语义：所有活跃菜谱的需求都应显示；不够时标记 insufficient，而不是隐藏。
+export interface ActiveNeededUsage {
+  recipeId: string;
+  recipeTitle: string;
+  quantity: string;
+}
+
+export function collectActiveNeededUsages(
+  item: PantryItem,
+  matchingRIs: RecipeItem[],
+  recipes: Recipe[],
+  originalParsed: ReturnType<typeof parseQuantity>,
+): { usages: ActiveNeededUsage[]; activeRemainingNum: number; activeRemainingDen: number; insufficient: boolean } {
+  const usages: ActiveNeededUsage[] = [];
+  let activeRemainingNum = originalParsed?.numerator ?? 0;
+  let activeRemainingDen = originalParsed?.denominator ?? 1;
+  let insufficient = false;
+
+  for (const ri of matchingRIs) {
+    const recipe = recipes.find(r => r.id === ri.recipeId);
+    if (!recipe || recipe.active === false) continue;
+
+    const recipeParsed = parseQuantity(ri.quantity);
+    const isUnitsMatch = originalParsed && recipeParsed && unitsMatch(originalParsed.unit, recipeParsed.unit);
+
+    if (isUnitsMatch) {
+      const result = subtractFraction(activeRemainingNum, activeRemainingDen, recipeParsed.numerator, recipeParsed.denominator);
+      if (result.num >= 0) {
+        activeRemainingNum = result.num;
+        activeRemainingDen = result.den;
+      } else {
+        insufficient = true;
+      }
+    }
+
+    usages.push({
+      recipeId: recipe.id,
+      recipeTitle: recipe.title,
+      quantity: ri.quantity,
+    });
+  }
+
+  return { usages, activeRemainingNum, activeRemainingDen, insufficient };
+}

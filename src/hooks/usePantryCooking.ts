@@ -11,7 +11,9 @@ import {
   parseQuantity, formatRemaining, formatQuantity,
   addFraction, subtractFraction, unitsMatch,
 } from '../lib/quantity';
-import { canonicalName, allocateCompletedUsage, buildVirtualToBuyItems } from '../lib/pantry-allocation';
+import {
+  canonicalName, allocateCompletedUsage, buildVirtualToBuyItems, collectActiveNeededUsages,
+} from '../lib/pantry-allocation';
 import type { PantryItem, Recipe, RecipeItem, RecipeItemWithMatch, PantryStatus, PantryCategory, PantryUsageInfo, PantryDisplayInfo } from '../types';
 
 const DEMO_PANTRY_KEY = 'diet_tracker_demo_pantry';
@@ -856,9 +858,6 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       const usages: PantryUsageInfo[] = [];
       let remainingNum = originalParsed?.numerator ?? 0;
       let remainingDen = originalParsed?.denominator ?? 1;
-      // 活跃菜谱的虚拟扣减量（不影响 displayQuantity，只用于判断够不够）
-      let activeRemainingNum = remainingNum;
-      let activeRemainingDen = remainingDen;
       let useFraction = originalParsed?.isFraction || originalParsed?.isHalf || false;
       const unit = originalParsed?.unit || '';
       let insufficient = false;
@@ -869,8 +868,6 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         const result = subtractFraction(remainingNum, remainingDen, allocDeduct.num, allocDeduct.den);
         remainingNum = result.num;
         remainingDen = result.den;
-        activeRemainingNum = remainingNum;
-        activeRemainingDen = remainingDen;
         if (insufficientIds.has(item.id)) insufficient = true;
       }
 
@@ -922,32 +919,16 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
             });
           }
           // 单位一致但用量分摊给了更早的批次 → 不在此批次重复显示，避免重复扣减的错觉
-        } else if (!isToBuy && isUnitsMatch) {
-          // 活跃菜谱 + 单位一致 → 虚拟扣减，判断够不够
-          const result = subtractFraction(activeRemainingNum, activeRemainingDen, recipeParsed.numerator, recipeParsed.denominator);
-          if (result.num >= 0) {
-            // 够用 → 标注"需用"
-            activeRemainingNum = result.num;
-            activeRemainingDen = result.den;
-            usages.push({
-              recipeId: recipe.id,
-              recipeTitle: recipe.title,
-              quantity: ri.quantity,
-              status: 'needed',
-              deducted: false,
-            });
-          }
-          // 不够 → 不标注（会出现在代购买列表中）
-        } else {
-          // 活跃菜谱 + 单位不一致（或待买项） → 标注"需用"
-          usages.push({
-            recipeId: recipe.id,
-            recipeTitle: recipe.title,
-            quantity: ri.quantity,
-            status: 'needed',
-            deducted: false,
-          });
         }
+      }
+
+      // 活跃菜谱的"需用"需求统一收集（避免做菜页与食材详情页不一致）
+      if (!isToBuy) {
+        const { usages: activeUsages, insufficient: activeInsufficient } = collectActiveNeededUsages(item, matchingRIs, recipes, originalParsed);
+        for (const u of activeUsages) {
+          usages.push({ ...u, status: 'needed', deducted: false });
+        }
+        if (activeInsufficient) insufficient = true;
       }
 
       // 计算显示数量
