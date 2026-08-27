@@ -8,7 +8,8 @@ import {
   SortableContext, useSortable, verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { PantryItem, PantryDisplayInfo, PantryUsageInfo, PantryStatus, PantryCategory } from '../types';
+import type { PantryItem, PantryDisplayInfo, PantryUsageInfo, PantryStatus, PantryCategory, LossReason, PantryLoss } from '../types';
+import { LOSS_REASON_LABELS } from '../types';
 import SwipeToDelete from './SwipeToDelete';
 
 // 四象限配置
@@ -31,7 +32,7 @@ interface PantryViewProps {
   pantryItems: PantryItem[];
   getPantryDisplay: (id: string) => PantryDisplayInfo;
   onCreatePantryItem: (name: string, quantity: string, status: PantryStatus) => Promise<void>;
-  onEditPantryItem: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
+  onEditPantryItem: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason) => Promise<void>;
   onToggleChecked: (id: string) => Promise<void>;
   onConvertToBuy: (id: string, quantity: string) => Promise<void>;
   onDeletePantryItem: (id: string) => Promise<void>;
@@ -581,7 +582,7 @@ function QuadrantZone({
   selectedIds: Set<string>;
   getPantryDisplay: (id: string) => PantryDisplayInfo;
   onToggleChecked: (id: string) => void;
-  onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason) => Promise<void>;
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
   onToggleSelect: (id: string) => void;
@@ -641,7 +642,7 @@ function SortablePantryItemCard({
   item: PantryItem;
   displayInfo: PantryDisplayInfo;
   onToggleChecked: (id: string) => void;
-  onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason) => Promise<void>;
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
   selectionMode: boolean;
@@ -655,6 +656,8 @@ function SortablePantryItemCard({
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(item.name);
   const [editQty, setEditQty] = useState(item.quantity);
+  const [editLoss, setEditLoss] = useState(false);
+  const [editLossReason, setEditLossReason] = useState<LossReason>('spoiled');
 
   const isChecked = item.status === 'checked';
   const isRemaining = displayInfo.displayQuantity.startsWith('剩');
@@ -664,7 +667,7 @@ function SortablePantryItemCard({
     if (editName.trim() && editName !== item.name) updates.name = editName.trim();
     if (editQty.trim() !== item.quantity) updates.quantity = editQty.trim();
     if (Object.keys(updates).length > 0) {
-      await onEdit(item.id, updates);
+      await onEdit(item.id, updates, editLoss ? editLossReason : undefined);
     } else {
       setEditName(item.name);
       setEditQty(item.quantity);
@@ -675,6 +678,8 @@ function SortablePantryItemCard({
   const handleCancelEdit = () => {
     setEditName(item.name);
     setEditQty(item.quantity);
+    setEditLoss(false);
+    setEditLossReason('spoiled');
     setEditing(false);
   };
 
@@ -715,41 +720,18 @@ function SortablePantryItemCard({
             </button>
           )}
           {editing ? (
-            <div className="flex items-center gap-2 flex-1 min-w-0" onPointerDown={e => e.stopPropagation()}>
-              <input
-                type="text"
-                value={editName}
-                onChange={e => setEditName(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') handleSaveEdit();
-                  if (e.key === 'Escape') handleCancelEdit();
-                }}
-                autoFocus
-                className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
-              />
-              <input
-                type="text"
-                value={editQty}
-                onChange={e => setEditQty(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') handleSaveEdit();
-                  if (e.key === 'Escape') handleCancelEdit();
-                }}
-                className="w-20 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
-              />
-              <button
-                onClick={handleSaveEdit}
-                className="w-7 h-7 rounded-lg bg-grape-600 text-white flex items-center justify-center shrink-0"
-              >
-                <Check size={14} />
-              </button>
-              <button
-                onClick={handleCancelEdit}
-                className="w-7 h-7 rounded-lg text-sage-400 hover:bg-sage-100 flex items-center justify-center shrink-0"
-              >
-                <X size={14} />
-              </button>
-            </div>
+            <PantryEditRow
+              editName={editName}
+              editQty={editQty}
+              editLoss={editLoss}
+              editLossReason={editLossReason}
+              onName={setEditName}
+              onQty={setEditQty}
+              onLossToggle={setEditLoss}
+              onLossReason={setEditLossReason}
+              onSave={handleSaveEdit}
+              onCancel={handleCancelEdit}
+            />
           ) : (
             <div
               className="flex items-baseline gap-2 flex-1 min-w-0"
@@ -767,6 +749,10 @@ function SortablePantryItemCard({
             </div>
           )}
         </div>
+        {/* 损耗标注 */}
+        {item.losses && item.losses.length > 0 && !editing && (
+          <LossList losses={item.losses} />
+        )}
         {/* 使用标注 */}
         {displayInfo.usages.length > 0 && !editing && (
           <UsageList usages={displayInfo.usages} onNavigateToRecipe={onNavigateToRecipe} />
@@ -784,13 +770,15 @@ function PantryItemCard({
   item: PantryItem;
   displayInfo: PantryDisplayInfo;
   onToggleChecked: (id: string) => void;
-  onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason) => Promise<void>;
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(item.name);
   const [editQty, setEditQty] = useState(item.quantity);
+  const [editLoss, setEditLoss] = useState(false);
+  const [editLossReason, setEditLossReason] = useState<LossReason>('spoiled');
 
   const isChecked = item.status === 'checked';
   const isRemaining = displayInfo.displayQuantity.startsWith('剩');
@@ -800,7 +788,7 @@ function PantryItemCard({
     if (editName.trim() && editName !== item.name) updates.name = editName.trim();
     if (editQty.trim() !== item.quantity) updates.quantity = editQty.trim();
     if (Object.keys(updates).length > 0) {
-      await onEdit(item.id, updates);
+      await onEdit(item.id, updates, editLoss ? editLossReason : undefined);
     } else {
       setEditName(item.name);
       setEditQty(item.quantity);
@@ -811,6 +799,8 @@ function PantryItemCard({
   const handleCancelEdit = () => {
     setEditName(item.name);
     setEditQty(item.quantity);
+    setEditLoss(false);
+    setEditLossReason('spoiled');
     setEditing(false);
   };
 
@@ -825,41 +815,18 @@ function PantryItemCard({
             {isChecked ? <CheckCircle size={20} className="text-sage-400" /> : <Circle size={20} />}
           </button>
           {editing ? (
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              <input
-                type="text"
-                value={editName}
-                onChange={e => setEditName(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') handleSaveEdit();
-                  if (e.key === 'Escape') handleCancelEdit();
-                }}
-                autoFocus
-                className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
-              />
-              <input
-                type="text"
-                value={editQty}
-                onChange={e => setEditQty(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') handleSaveEdit();
-                  if (e.key === 'Escape') handleCancelEdit();
-                }}
-                className="w-20 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
-              />
-              <button
-                onClick={handleSaveEdit}
-                className="w-7 h-7 rounded-lg bg-grape-600 text-white flex items-center justify-center shrink-0"
-              >
-                <Check size={14} />
-              </button>
-              <button
-                onClick={handleCancelEdit}
-                className="w-7 h-7 rounded-lg text-sage-400 hover:bg-sage-100 flex items-center justify-center shrink-0"
-              >
-                <X size={14} />
-              </button>
-            </div>
+            <PantryEditRow
+              editName={editName}
+              editQty={editQty}
+              editLoss={editLoss}
+              editLossReason={editLossReason}
+              onName={setEditName}
+              onQty={setEditQty}
+              onLossToggle={setEditLoss}
+              onLossReason={setEditLossReason}
+              onSave={handleSaveEdit}
+              onCancel={handleCancelEdit}
+            />
           ) : (
             <div
               className="flex items-baseline gap-2 flex-1 min-w-0"
@@ -877,6 +844,10 @@ function PantryItemCard({
             </div>
           )}
         </div>
+        {/* 损耗标注 */}
+        {item.losses && item.losses.length > 0 && !editing && (
+          <LossList losses={item.losses} />
+        )}
         {/* 使用标注 */}
         {displayInfo.usages.length > 0 && !editing && (
           <UsageList usages={displayInfo.usages} onNavigateToRecipe={onNavigateToRecipe} />
@@ -894,20 +865,22 @@ function ToBuyItemCard({
   item: PantryItem;
   displayInfo: PantryDisplayInfo;
   onBuyClick: (item: PantryItem) => void;
-  onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason) => Promise<void>;
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(item.name);
   const [editQty, setEditQty] = useState(item.quantity);
+  const [editLoss, setEditLoss] = useState(false);
+  const [editLossReason, setEditLossReason] = useState<LossReason>('spoiled');
 
   const handleSaveEdit = async () => {
     const updates: { name?: string; quantity?: string } = {};
     if (editName.trim() && editName !== item.name) updates.name = editName.trim();
     if (editQty.trim() !== item.quantity) updates.quantity = editQty.trim();
     if (Object.keys(updates).length > 0) {
-      await onEdit(item.id, updates);
+      await onEdit(item.id, updates, editLoss ? editLossReason : undefined);
     } else {
       setEditName(item.name);
       setEditQty(item.quantity);
@@ -918,6 +891,8 @@ function ToBuyItemCard({
   const handleCancelEdit = () => {
     setEditName(item.name);
     setEditQty(item.quantity);
+    setEditLoss(false);
+    setEditLossReason('spoiled');
     setEditing(false);
   };
 
@@ -1029,6 +1004,108 @@ function UsageList({ usages, onNavigateToRecipe }: {
           >
             {u.recipeTitle}
           </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ===== 可复用的行内编辑区（名称 + 数量 + 保存/取消 + 损耗标记） =====
+
+function PantryEditRow({
+  editName, editQty, editLoss, editLossReason,
+  onName, onQty, onLossToggle, onLossReason, onSave, onCancel,
+}: {
+  editName: string;
+  editQty: string;
+  editLoss: boolean;
+  editLossReason: LossReason;
+  onName: (v: string) => void;
+  onQty: (v: string) => void;
+  onLossToggle: (v: boolean) => void;
+  onLossReason: (v: LossReason) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="flex-1 min-w-0 space-y-1.5" onPointerDown={e => e.stopPropagation()}>
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={editName}
+          onChange={e => onName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') onSave(); if (e.key === 'Escape') onCancel(); }}
+          autoFocus
+          className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+        />
+        <input
+          type="text"
+          value={editQty}
+          onChange={e => onQty(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') onSave(); if (e.key === 'Escape') onCancel(); }}
+          className="w-20 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+        />
+        <button
+          onClick={onSave}
+          className="w-7 h-7 rounded-lg bg-grape-600 text-white flex items-center justify-center shrink-0"
+        >
+          <Check size={14} />
+        </button>
+        <button
+          onClick={onCancel}
+          className="w-7 h-7 rounded-lg text-sage-400 hover:bg-sage-100 flex items-center justify-center shrink-0"
+        >
+          <X size={14} />
+        </button>
+      </div>
+      <label className="flex items-center gap-1.5 text-xs text-sage-500 select-none cursor-pointer">
+        <input
+          type="checkbox"
+          checked={editLoss}
+          onChange={e => onLossToggle(e.target.checked)}
+          className="accent-red-500"
+        />
+        标记为损耗（坏的 / 过期的）
+      </label>
+      {editLoss && (
+        <select
+          value={editLossReason}
+          onChange={e => onLossReason(e.target.value as LossReason)}
+          className="px-2 py-1 rounded-lg bg-white border border-sage-200 text-xs text-sage-600 focus:outline-none focus:border-grape-400"
+        >
+          {(['spoiled', 'expired', 'overcooked', 'other'] as LossReason[]).map(r => (
+            <option key={r} value={r}>{LOSS_REASON_LABELS[r]}</option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
+// ===== 损耗记录展示 =====
+
+function formatRelativeDate(iso: string): string {
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  const day = 86400000;
+  if (diff < 0) return '刚刚';
+  if (diff < day) return '今天';
+  if (diff < 2 * day) return '昨天';
+  if (diff < 7 * day) return `${Math.floor(diff / day)}天前`;
+  return d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+}
+
+function LossList({ losses }: { losses: PantryLoss[] }) {
+  return (
+    <div className="ml-8 mt-1.5 space-y-1">
+      {losses.map(l => (
+        <div key={l.id} className="flex items-center gap-1.5 text-xs text-red-500/90">
+          <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
+          <span>损耗 −{l.quantity}</span>
+          <span className="text-sage-300">·</span>
+          <span>{LOSS_REASON_LABELS[l.reason]}</span>
+          <span className="text-sage-300">·</span>
+          <span className="text-sage-400">{formatRelativeDate(l.createdAt)}</span>
         </div>
       ))}
     </div>

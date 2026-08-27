@@ -3,7 +3,7 @@
 // 导致同名食材存在多条记录（多批次）时重复扣减——新买的食材也会被历史菜谱扣到 0。
 // 正确语义：每份用量只扣一次，按购买时间（createdAt 升序）先扣最早的批次（FIFO），
 // 且只有「菜谱完成之前就已存在」的批次才承担该次扣减（之后买的是新批次）。
-import type { PantryItem, Recipe, RecipeItem, PantryStatus, PantryCategory } from '../types';
+import type { PantryItem, Recipe, RecipeItem, PantryStatus, PantryCategory, LossReason, PantryLoss } from '../types';
 import { parseQuantity, formatQuantity, unitsMatch, addFraction, subtractFraction } from './quantity';
 
 // 同义词归一化：不同写法的同一食材视为同一个，用于食材库与菜谱的匹配
@@ -275,6 +275,24 @@ export interface ActiveNeededUsage {
   recipeId: string;
   recipeTitle: string;
   quantity: string;
+}
+
+// ===== 损耗计算（部分损耗，如变质/过期/做坏） =====
+// 编辑食材数量时，若新数量 < 旧数量且单位一致，则把"减少的部分"记成一条损耗记录。
+// 数量不变 / 增加（视为录入修正）则返回 null，不记损耗。
+export function computeLossFromEdit(
+  oldQty: string,
+  newQty: string,
+  reason: LossReason,
+  id: string,
+): PantryLoss | null {
+  const oldParsed = parseQuantity(oldQty);
+  const newParsed = parseQuantity(newQty);
+  if (!oldParsed || !newParsed || !unitsMatch(oldParsed.unit, newParsed.unit)) return null;
+  const diff = subtractFraction(oldParsed.numerator, oldParsed.denominator, newParsed.numerator, newParsed.denominator);
+  if (diff.num <= 0) return null;
+  const quantity = formatQuantity(diff.num, diff.den, oldParsed.isFraction || oldParsed.isHalf) + oldParsed.unit;
+  return { id, quantity, reason, createdAt: new Date().toISOString() };
 }
 
 export function collectActiveNeededUsages(

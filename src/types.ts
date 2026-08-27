@@ -82,6 +82,25 @@ export interface PantryItem {
   isVirtual?: boolean;
   usedQuantity?: string;      // 旧字段，已废弃，保留向后兼容
   originalQuantity?: string; // 原始数量备份（迁移用，= quantity）
+  losses?: PantryLoss[];      // 部分损耗记录（变质/过期/做坏等），用于体现损耗
+}
+
+// 食材部分损耗的原因
+export type LossReason = 'spoiled' | 'expired' | 'overcooked' | 'other';
+
+export const LOSS_REASON_LABELS: Record<LossReason, string> = {
+  spoiled: '变质',
+  expired: '过期',
+  overcooked: '做坏',
+  other: '其他',
+};
+
+// 单条损耗记录
+export interface PantryLoss {
+  id: string;
+  quantity: string;       // 损耗量，如 "100g"
+  reason: LossReason;
+  createdAt: string;
 }
 
 // 单条消耗记录

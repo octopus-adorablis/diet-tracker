@@ -12,9 +12,9 @@ import {
   addFraction, subtractFraction, unitsMatch,
 } from '../lib/quantity';
 import {
-  canonicalName, allocateCompletedUsage, buildVirtualToBuyItems, collectActiveNeededUsages,
+  canonicalName, allocateCompletedUsage, buildVirtualToBuyItems, collectActiveNeededUsages, computeLossFromEdit,
 } from '../lib/pantry-allocation';
-import type { PantryItem, Recipe, RecipeItem, RecipeItemWithMatch, PantryStatus, PantryCategory, PantryUsageInfo, PantryDisplayInfo } from '../types';
+import type { PantryItem, Recipe, RecipeItem, RecipeItemWithMatch, PantryStatus, PantryCategory, PantryUsageInfo, PantryDisplayInfo, LossReason } from '../types';
 
 const DEMO_PANTRY_KEY = 'diet_tracker_demo_pantry';
 const DEMO_RECIPES_KEY = 'diet_tracker_demo_recipes';
@@ -318,7 +318,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     }
   }, [userId, isDemo, configured, pantryItems, pushUndo]);
 
-  const editPantryItem = useCallback(async (id: string, updates: Partial<PantryItem>) => {
+  const editPantryItem = useCallback(async (id: string, updates: Partial<PantryItem>, lossReason?: LossReason) => {
     const oldItem = pantryItems.find(p => p.id === id);
     if (!oldItem) return;
     // 手动改数量时，把 originalQuantity 同步成新数量（它是显示/扣减的基数）。
@@ -326,6 +326,19 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     const effectiveUpdates: Partial<PantryItem> = { ...updates };
     if (updates.quantity !== undefined) {
       effectiveUpdates.originalQuantity = updates.quantity;
+    }
+    // 标记为损耗：把"减少的那部分"记成一条损耗记录，界面可见"损耗 -X"
+    // 仅当数量确实减少且单位一致时记录；数量不变/增加视为普通修正，不记损耗
+    if (lossReason && updates.quantity !== undefined) {
+      const newLoss = computeLossFromEdit(
+        oldItem.originalQuantity || oldItem.quantity,
+        updates.quantity,
+        lossReason,
+        genId(),
+      );
+      if (newLoss) {
+        effectiveUpdates.losses = [...(oldItem.losses || []), newLoss];
+      }
     }
     const oldValues = Object.fromEntries(
       Object.keys(effectiveUpdates).map(k => [k, (oldItem as unknown as Record<string, unknown>)[k]])
