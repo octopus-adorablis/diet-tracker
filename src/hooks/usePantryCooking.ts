@@ -321,11 +321,17 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
   const editPantryItem = useCallback(async (id: string, updates: Partial<PantryItem>) => {
     const oldItem = pantryItems.find(p => p.id === id);
     if (!oldItem) return;
+    // 手动改数量时，把 originalQuantity 同步成新数量（它是显示/扣减的基数）。
+    // 否则只改 quantity 而 originalQuantity 仍是旧值，界面永远读旧基数 → 手动改数量"假生效"。
+    const effectiveUpdates: Partial<PantryItem> = { ...updates };
+    if (updates.quantity !== undefined) {
+      effectiveUpdates.originalQuantity = updates.quantity;
+    }
     const oldValues = Object.fromEntries(
-      Object.keys(updates).map(k => [k, (oldItem as unknown as Record<string, unknown>)[k]])
+      Object.keys(effectiveUpdates).map(k => [k, (oldItem as unknown as Record<string, unknown>)[k]])
     ) as Partial<PantryItem>;
     if (isDemo || !configured) {
-      const updated = getDemoPantry().map(p => p.id === id ? { ...p, ...updates } : p);
+      const updated = getDemoPantry().map(p => p.id === id ? { ...p, ...effectiveUpdates } : p);
       saveDemoPantry(updated);
       setPantryItems(updated);
       pushUndo(`编辑"${oldItem.name}"`, async () => {
@@ -335,8 +341,8 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       });
       return;
     }
-    await updatePantryItem(id, updates);
-    setPantryItems(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+    await updatePantryItem(id, effectiveUpdates);
+    setPantryItems(prev => prev.map(p => p.id === id ? { ...p, ...effectiveUpdates } : p));
     pushUndo(`编辑"${oldItem.name}"`, async () => {
       await updatePantryItem(id, oldValues);
       setPantryItems(prev => prev.map(p => p.id === id ? { ...p, ...oldValues } : p));

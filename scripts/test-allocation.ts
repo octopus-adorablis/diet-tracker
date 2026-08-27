@@ -89,19 +89,36 @@ console.log('\n场景3：FIFO 跨批次（用量超过第一批）');
   check('两个批次都记录该菜谱用量', allocatedRecipeItemIds.get('a1')?.has('ri1') && allocatedRecipeItemIds.get('a2')?.has('ri1'), true);
 }
 
-// ===== 场景 4：已用完(checked)批次承担历史扣减，保护新批次 =====
-console.log('\n场景4：旧批次已勾选"已用完"');
+// ===== 场景 4：已用完(checked)批次不再承担扣减，扣减落到现有(active)批次 =====
+// 修复 bug：旧逻辑让隐藏的 checked 批次吸收扣减，导致用户看到的现有批次数量不变（"没同步"）
+// 注意：现有批次购买时间须早于菜谱完成时间，才会被 FIFO 判定为"可承担该次扣减"的批次
+console.log('\n场景4：旧批次已勾选"已用完"（应扣现有批次）');
 {
   const pantryItems = [
     pantry('c1', '柠檬', '2个', '2026-08-01T00:00:00Z', 'checked'),
-    pantry('c2', '柠檬', '2个', '2026-08-05T00:00:00Z'),
+    pantry('c2', '柠檬', '2个', '2026-08-02T00:00:00Z'),
   ];
   const recipes = [recipe('r1', '2026-08-02T00:00:00Z', false, '2026-08-03T00:00:00Z')];
   const recipeItems = [ri('ri1', 'r1', '柠檬', '2个')];
   const { deductions, allocatedRecipeItemIds } = allocateCompletedUsage(pantryItems, recipeItems, recipes);
-  check('扣减全部由已用完批次承担', deductions.get('c1'), { num: 2, den: 1 });
-  check('新批次零扣减', deductions.has('c2'), false);
-  check('新批次不显示该菜谱记录', allocatedRecipeItemIds.has('c2'), false);
+  check('已用完批次不承担扣减', deductions.has('c1'), false);
+  check('扣减由现有批次承担', deductions.get('c2'), { num: 2, den: 1 });
+  check('现有批次显示该菜谱记录', allocatedRecipeItemIds.get('c2')?.has('ri1'), true);
+}
+
+// ===== 场景 4b：同名多批次，最旧的现有(active)批次优先被扣（FIFO），现存批次均可见 =====
+console.log('\n场景4b：两个现有批次，FIFO 扣最旧的（修复"没同步"观感）');
+{
+  const pantryItems = [
+    pantry('a1', '羽衣甘蓝', '100g', '2026-08-20T00:00:00Z'),
+    pantry('a2', '羽衣甘蓝', '200g', '2026-08-25T00:00:00Z'),
+  ];
+  const recipes = [recipe('r1', '2026-08-26T00:00:00Z', false, '2026-08-27T16:00:00Z')];
+  const recipeItems = [ri('ri1', 'r1', '羽衣甘蓝', '30g')];
+  const { deductions } = allocateCompletedUsage(pantryItems, recipeItems, recipes);
+  check('最旧现有批次承担30g扣减', deductions.get('a1'), { num: 30, den: 1 });
+  check('较新现有批次无扣减(仍200g)', remaining(pantryItems[1], deductions), '200g');
+  check('最旧批次显示剩70g', remaining(pantryItems[0], deductions), '剩70g');
 }
 
 // ===== 场景 5：用量超过全部库存 → 旧柠檬标记"不够了" =====
