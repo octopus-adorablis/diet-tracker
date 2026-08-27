@@ -1078,10 +1078,20 @@ function PantryEditRow({
   const lossMismatch = editLoss && !!lossText.trim() && !!baseParsed && !!lossParsed &&
     !unitsMatch(baseParsed.unit, lossParsed.unit);
 
+  // 大损耗二次确认：损耗量 >100 或超过库存 30% 时弹窗，避免手误把 60g 输成 640g
+  const shouldConfirmLoss = editLoss && !!lossText.trim() && !!baseParsed && !!lossParsed &&
+    unitsMatch(baseParsed.unit, lossParsed.unit) &&
+    baseParsed.number > 0 &&
+    (lossParsed.number > 100 || lossParsed.number / baseParsed.number > 0.3);
+
   const handleSave = () => {
     if (editLoss) {
       // 损耗模式：提交剩余量；空损耗文本 = 不记损耗
       const reason = lossText.trim() ? editLossReason : undefined;
+      if (shouldConfirmLoss) {
+        const msg = `确认记录「${editName || '该食材'}」损耗 ${lossText} 吗？\n保存后剩余将变为 ${remaining}，且会加入损耗记录。\n\n如果只是想修改数量（不是损耗），请取消勾选「标记为损耗」后再保存。`;
+        if (!window.confirm(msg)) return;
+      }
       onSave(editName, remaining, reason);
     } else {
       onSave(editName, editQty, undefined);
@@ -1090,7 +1100,6 @@ function PantryEditRow({
 
   const qtyValue = editLoss ? lossText : editQty;
   const qtyOnChange = editLoss ? handleLossText : onQty;
-  const qtyPlaceholder = editLoss ? '损耗量，如 60g' : '数量';
 
   return (
     <div className="flex-1 min-w-0 space-y-1.5" onPointerDown={e => e.stopPropagation()}>
@@ -1103,19 +1112,29 @@ function PantryEditRow({
           autoFocus
           className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
         />
-        <input
-          type="text"
-          value={qtyValue}
-          onChange={e => qtyOnChange(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') onCancel(); }}
-          placeholder={qtyPlaceholder}
-          className={`w-20 px-2 py-1 rounded-lg bg-white border text-sm focus:outline-none ${
-            editLoss ? 'border-red-300 focus:border-red-400 text-red-600' : 'border-grape-400 focus:border-grape-500'
-          }`}
-        />
+        <div className={`flex items-center gap-1 px-2 py-1 rounded-lg bg-white border text-sm ${
+          editLoss ? 'border-red-300 focus-within:border-red-400' : 'border-grape-400 focus-within:border-grape-500'
+        }`}>
+          {editLoss && (
+            <span className="text-xs text-red-500 whitespace-nowrap select-none">损耗</span>
+          )}
+          <input
+            type="text"
+            value={qtyValue}
+            onChange={e => qtyOnChange(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') onCancel(); }}
+            placeholder={editLoss ? '如 60g' : '数量'}
+            className={`w-16 bg-transparent focus:outline-none text-sm ${
+              editLoss ? 'text-red-600 placeholder:text-red-300' : ''
+            }`}
+          />
+        </div>
         <button
           onClick={handleSave}
-          className="w-7 h-7 rounded-lg bg-grape-600 text-white flex items-center justify-center shrink-0"
+          title={editLoss ? '确认损耗' : '保存'}
+          className={`w-7 h-7 rounded-lg text-white flex items-center justify-center shrink-0 ${
+            editLoss ? 'bg-red-500 hover:bg-red-600' : 'bg-grape-600 hover:bg-grape-700'
+          }`}
         >
           <Check size={14} />
         </button>
@@ -1147,20 +1166,28 @@ function PantryEditRow({
                 <option key={r} value={r}>{LOSS_REASON_LABELS[r]}</option>
               ))}
             </select>
-            <span className={`text-[11px] font-medium ${lossExceeds ? 'text-red-600' : 'text-sage-500'}`}>
-              损耗 {lossText || '0'} → 剩余 <span className={lossExceeds ? 'text-red-600 font-bold' : 'text-grape-600'}>{remaining}</span>
+            <span className={`text-sm font-medium ${lossExceeds ? 'text-red-600' : 'text-sage-600'}`}>
+              损耗 <span className="font-bold text-red-600">{lossText || '0'}</span>
+              <span className="mx-1 text-sage-400">→</span>
+              剩余 <span className={`font-bold ${lossExceeds ? 'text-red-600' : 'text-grape-600'}`}>{remaining}</span>
             </span>
           </div>
           {lossExceeds && (
             <div className="flex items-center gap-1.5 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
               <AlertTriangle size={12} className="shrink-0" />
-              损耗量≥库存，食材将归零。确认无误再保存，或点「撤销」回退。
+              损耗量≥库存，食材将归零。确认无误再保存，或点顶部「撤销」回退。
             </div>
           )}
           {lossMismatch && (
             <div className="flex items-center gap-1.5 text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
               <AlertTriangle size={12} className="shrink-0" />
               损耗单位与库存不一致（如库存写 500g、损耗写 2个），无法计算，请带相同单位。
+            </div>
+          )}
+          {shouldConfirmLoss && !lossExceeds && (
+            <div className="flex items-center gap-1.5 text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+              <AlertTriangle size={12} className="shrink-0" />
+              损耗量较大，保存时会再次确认。
             </div>
           )}
         </div>
