@@ -33,7 +33,7 @@ interface PantryViewProps {
   pantryItems: PantryItem[];
   getPantryDisplay: (id: string) => PantryDisplayInfo;
   onCreatePantryItem: (name: string, quantity: string, status: PantryStatus) => Promise<void>;
-  onEditPantryItem: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason) => Promise<void>;
+  onEditPantryItem: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason, lossQuantity?: string) => Promise<void>;
   onToggleChecked: (id: string) => Promise<void>;
   onConvertToBuy: (id: string, quantity: string) => Promise<void>;
   onDeletePantryItem: (id: string) => Promise<void>;
@@ -605,7 +605,7 @@ function QuadrantZone({
   selectedIds: Set<string>;
   getPantryDisplay: (id: string) => PantryDisplayInfo;
   onToggleChecked: (id: string) => void;
-  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason) => Promise<void>;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason, lossQuantity?: string) => Promise<void>;
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
   onToggleSelect: (id: string) => void;
@@ -667,7 +667,7 @@ function SortablePantryItemCard({
   item: PantryItem;
   displayInfo: PantryDisplayInfo;
   onToggleChecked: (id: string) => void;
-  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason) => Promise<void>;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason, lossQuantity?: string) => Promise<void>;
   onDelete: (id: string) => void;
   onDeleteLoss: (id: string, lossId: string) => Promise<void>;
   onNavigateToRecipe: (recipeId: string) => void;
@@ -688,12 +688,12 @@ function SortablePantryItemCard({
   const isChecked = item.status === 'checked';
   const isRemaining = displayInfo.displayQuantity.startsWith('剩');
 
-  const handleSaveEdit = async (name: string, quantity: string | undefined, reason: LossReason | undefined) => {
+  const handleSaveEdit = async (name: string, quantity: string | undefined, reason: LossReason | undefined, lossText?: string) => {
     const updates: { name?: string; quantity?: string } = {};
     if (name.trim() && name !== item.name) updates.name = name.trim();
     if (quantity !== undefined && quantity !== item.quantity) updates.quantity = quantity;
     if (Object.keys(updates).length > 0) {
-      await onEdit(item.id, updates, reason);
+      await onEdit(item.id, updates, reason, lossText);
     } else {
       setEditName(item.name);
       setEditQty(item.quantity);
@@ -751,7 +751,7 @@ function SortablePantryItemCard({
               editQty={editQty}
               editLoss={editLoss}
               editLossReason={editLossReason}
-              baseQty={item.quantity}
+              baseQty={displayInfo.displayQuantity}
               onName={setEditName}
               onQty={setEditQty}
               onLossToggle={setEditLoss}
@@ -808,7 +808,7 @@ function PantryItemCard({
   item: PantryItem;
   displayInfo: PantryDisplayInfo;
   onToggleChecked: (id: string) => void;
-  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason) => Promise<void>;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason, lossQuantity?: string) => Promise<void>;
   onDelete: (id: string) => void;
   onDeleteLoss: (id: string, lossId: string) => Promise<void>;
   onNavigateToRecipe: (recipeId: string) => void;
@@ -822,12 +822,12 @@ function PantryItemCard({
   const isChecked = item.status === 'checked';
   const isRemaining = displayInfo.displayQuantity.startsWith('剩');
 
-  const handleSaveEdit = async (name: string, quantity: string | undefined, reason: LossReason | undefined) => {
+  const handleSaveEdit = async (name: string, quantity: string | undefined, reason: LossReason | undefined, lossText?: string) => {
     const updates: { name?: string; quantity?: string } = {};
     if (name.trim() && name !== item.name) updates.name = name.trim();
     if (quantity !== undefined && quantity !== item.quantity) updates.quantity = quantity;
     if (Object.keys(updates).length > 0) {
-      await onEdit(item.id, updates, reason);
+      await onEdit(item.id, updates, reason, lossText);
     } else {
       setEditName(item.name);
       setEditQty(item.quantity);
@@ -859,7 +859,7 @@ function PantryItemCard({
               editQty={editQty}
               editLoss={editLoss}
               editLossReason={editLossReason}
-              baseQty={item.quantity}
+              baseQty={displayInfo.displayQuantity}
               onName={setEditName}
               onQty={setEditQty}
               onLossToggle={setEditLoss}
@@ -914,7 +914,7 @@ function ToBuyItemCard({
   item: PantryItem;
   displayInfo: PantryDisplayInfo;
   onBuyClick: (item: PantryItem) => void;
-  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason) => Promise<void>;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason, lossQuantity?: string) => Promise<void>;
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
 }) {
@@ -924,12 +924,12 @@ function ToBuyItemCard({
   const [editLoss, setEditLoss] = useState(false);
   const [editLossReason, setEditLossReason] = useState<LossReason>('spoiled');
 
-  const handleSaveEdit = async (name: string, quantity: string | undefined, reason: LossReason | undefined) => {
+  const handleSaveEdit = async (name: string, quantity: string | undefined, reason: LossReason | undefined, lossText?: string) => {
     const updates: { name?: string; quantity?: string } = {};
     if (name.trim() && name !== item.name) updates.name = name.trim();
     if (quantity !== undefined && quantity !== item.quantity) updates.quantity = quantity;
     if (Object.keys(updates).length > 0) {
-      await onEdit(item.id, updates, reason);
+      await onEdit(item.id, updates, reason, lossText);
     } else {
       setEditName(item.name);
       setEditQty(item.quantity);
@@ -1078,7 +1078,7 @@ function PantryEditRow({
   onQty: (v: string) => void;
   onLossToggle: (v: boolean) => void;
   onLossReason: (v: LossReason) => void;
-  onSave: (name: string, quantity: string | undefined, reason: LossReason | undefined) => void;
+  onSave: (name: string, quantity: string | undefined, reason: LossReason | undefined, lossText?: string) => void;
   onCancel: () => void;
 }) {
   // 损耗量文本（损耗模式下唯一的编辑字段）
@@ -1114,15 +1114,15 @@ function PantryEditRow({
 
   const handleSave = () => {
     if (editLoss) {
-      // 损耗模式：提交剩余量；空损耗文本 = 不记损耗
+      // 损耗模式：提交剩余量 + 损耗量（精确录入值，不靠 originalQuantity 反推）；空损耗文本 = 不记损耗
       const reason = lossText.trim() ? editLossReason : undefined;
       if (shouldConfirmLoss) {
         const msg = `确认记录「${editName || '该食材'}」损耗 ${lossText} 吗？\n保存后剩余将变为 ${remaining}，且会加入损耗记录。\n\n如果只是想修改数量（不是损耗），请取消勾选「标记为损耗」后再保存。`;
         if (!window.confirm(msg)) return;
       }
-      onSave(editName, remaining, reason);
+      onSave(editName, remaining, reason, lossText);
     } else {
-      onSave(editName, editQty, undefined);
+      onSave(editName, editQty, undefined, undefined);
     }
   };
 

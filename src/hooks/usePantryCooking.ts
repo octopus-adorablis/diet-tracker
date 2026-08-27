@@ -12,7 +12,7 @@ import {
   addFraction, subtractFraction, unitsMatch,
 } from '../lib/quantity';
 import {
-  canonicalName, allocateCompletedUsage, buildVirtualToBuyItems, collectActiveNeededUsages, computeLossFromEdit, revertLoss,
+  canonicalName, allocateCompletedUsage, buildVirtualToBuyItems, collectActiveNeededUsages, makeLossRecord, recomputeQuantityAfterLosses,
 } from '../lib/pantry-allocation';
 import type { PantryItem, Recipe, RecipeItem, RecipeItemWithMatch, PantryStatus, PantryCategory, PantryUsageInfo, PantryDisplayInfo, LossReason, PantryLoss } from '../types';
 
@@ -318,28 +318,26 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     }
   }, [userId, isDemo, configured, pantryItems, pushUndo]);
 
-  const editPantryItem = useCallback(async (id: string, updates: Partial<PantryItem>, lossReason?: LossReason) => {
+  const editPantryItem = useCallback(async (id: string, updates: Partial<PantryItem>, lossReason?: LossReason, lossQuantity?: string) => {
     const oldItem = pantryItems.find(p => p.id === id);
     if (!oldItem) return;
-    // 手动改数量时，把 originalQuantity 同步成新数量（它是显示/扣减的基数）。
-    // 否则只改 quantity 而 originalQuantity 仍是旧值，界面永远读旧基数 → 手动改数量"假生效"。
     const effectiveUpdates: Partial<PantryItem> = { ...updates };
-    if (updates.quantity !== undefined) {
+    if (lossReason && lossQuantity !== undefined && lossQuantity.trim()) {
+      // ===== 损耗模式：originalQuantity（采购基数 / FIFO 扣减池）保持【不可变】 =====
+      // 只把这次损耗追加进 losses，再重算 quantity = originalQuantity − 所有损耗。
+      // 这样已完成的菜谱用量不会被重复扣（旧实现改写 originalQuantity 导致库存被扣到 0）。
+      const newLoss = makeLossRecord(genId(), lossQuantity, oldItem.originalQuantity || oldItem.quantity, lossReason);
+      const losses = [...(oldItem.losses || []), newLoss];
+      effectiveUpdates.losses = losses;
+      effectiveUpdates.quantity = recomputeQuantityAfterLosses({ ...oldItem, losses });
+      // 关键：不覆盖 originalQuantity
+    } else if (updates.quantity !== undefined) {
+      // ===== 非损耗（普通修正数量 / 改名）：quantity 即用户录入的当前库存 =====
+      // 同时把 originalQuantity 同步成同一值，作为后续 FIFO 的基数（"修正采购量"语义）。
       effectiveUpdates.originalQuantity = updates.quantity;
     }
-    // 标记为损耗：把"减少的那部分"记成一条损耗记录，界面可见"损耗 -X"
-    // 仅当数量确实减少且单位一致时记录；数量不变/增加视为普通修正，不记损耗
-    if (lossReason && updates.quantity !== undefined) {
-      const newLoss = computeLossFromEdit(
-        oldItem.originalQuantity || oldItem.quantity,
-        updates.quantity,
-        lossReason,
-        genId(),
-      );
-      if (newLoss) {
-        effectiveUpdates.losses = [...(oldItem.losses || []), newLoss];
-      }
-    }
+    // 注意：上方损耗分支不再使用 computeLossFromEdit，因为损耗量应 = 用户录入值，
+    // 而非 (originalQuantity − 剩余量)，后者会把 FIFO 已扣量也记成损耗。
     const oldValues = Object.fromEntries(
       Object.keys(effectiveUpdates).map(k => [k, (oldItem as unknown as Record<string, unknown>)[k]])
     ) as Partial<PantryItem>;
@@ -362,18 +360,18 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     });
   }, [pantryItems, isDemo, configured, pushUndo]);
 
-  // 删除单条损耗记录：库存加回该损耗量，恢复到「登记这条损耗之前」
-  // 支持撤销（撤销 = 重新写回这条损耗记录 + 扣回该量）
+  // 删除单条损耗记录：从 losses 移除该条，库存加回（重算 quantity），
+  // originalQuantity（采购基数）保持不变，避免再次污染 FIFO 扣减池。
+  // 支持撤销（撤销 = 重新写回这条损耗记录 + 扣回该量）。
   const removePantryLoss = useCallback(async (id: string, lossId: string) => {
     const oldItem = pantryItems.find(p => p.id === id);
     if (!oldItem) return;
-    const result = revertLoss(oldItem, lossId);
-    if (!result) return;
+    const losses = (oldItem.losses || []).filter(l => l.id !== lossId);
 
     const effectiveUpdates: Partial<PantryItem> = {
-      quantity: result.quantity,
-      originalQuantity: result.originalQuantity,
-      losses: result.losses,
+      quantity: recomputeQuantityAfterLosses({ ...oldItem, losses }),
+      losses,
+      // originalQuantity 保持不变
     };
     const oldValues = {
       quantity: oldItem.quantity,
@@ -855,13 +853,6 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     const map = new Map<string, PantryDisplayInfo>();
     const { deductions: allocDeductions, allocatedRecipeItemIds, insufficientIds } = completedAllocations;
 
-    // 预计算：哪些食材名称有"已用完"记录
-    // 用于展示层过滤：新批次不显示历史菜谱的"已用"标注
-    const usedUpNames = new Set<string>();
-    for (const p of allPantryItems) {
-      if (p.status === 'checked') usedUpNames.add(canonicalName(p.name));
-    }
-
     // 预计算：哪些活跃菜谱食材已被真实活跃食材"覆盖"（虚拟扣减后够用）
     // 用于虚拟待买项（virtual-shortfall-*）只显示未被覆盖的菜谱
     // 场景：食材120g，菜谱A需120g + 菜谱B需120g → 菜谱A被覆盖，待买项只显示菜谱B
@@ -917,6 +908,17 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       const unit = originalParsed?.unit || '';
       let insufficient = false;
 
+      // 先减去所有损耗（损耗只影响当前库存，不进入 FIFO 扣减池）
+      const itemLosses = item.losses || [];
+      for (const l of itemLosses) {
+        const lp = parseQuantity(l.quantity);
+        if (!lp || !originalParsed || !unitsMatch(lp.unit, originalParsed.unit)) continue;
+        const r = subtractFraction(remainingNum, remainingDen, lp.numerator, lp.denominator);
+        remainingNum = r.num;
+        remainingDen = r.den;
+        useFraction = useFraction || lp.isFraction || lp.isHalf;
+      }
+
       // 已完成菜谱用量的 FIFO 分摊扣减：该批次实际承担的量（每份用量只扣一次）
       const allocDeduct = allocDeductions.get(item.id);
       if (allocDeduct) {
@@ -931,12 +933,6 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         if (!recipe) continue;
 
         const isCompleted = recipe.active === false;
-        // 时间判断：只在"新批次"食材上生效（同名有"已用完"记录）
-        // 仅用于展示层过滤"已用"标注（扣减本身已由 FIFO 分摊按时间先后处理）
-        const isNewBatch = usedUpNames.has(canonicalName(item.name));
-        const timeSkip = isCompleted && isNewBatch && recipe.completedAt && item.createdAt &&
-            new Date(item.createdAt) > new Date(recipe.completedAt);
-        if (timeSkip) continue;
 
         // 虚拟待买项（数量不足自动生成的）跳过已被真实食材覆盖的菜谱
         // 只显示"不够买"的那部分菜谱，避免与真实食材的标注重复
@@ -987,7 +983,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
       }
 
       // 计算显示数量
-      const hasDeductions = usages.some(u => u.deducted);
+      const hasDeductions = usages.some(u => u.deducted) || itemLosses.length > 0;
       let displayQuantity: string;
       if (hasDeductions && originalParsed) {
         // 有扣减 → 显示"剩X"

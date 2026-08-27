@@ -86,53 +86,72 @@ export function allocateCompletedUsage(
     const pools = poolsByName.get(canonicalName(ri.name));
     if (!pools || pools.length === 0) continue;
 
-    // 只有菜谱完成前就存在的批次才承担扣减（之后买的属于新批次，不被历史菜谱误扣）
-    // completedAt 缺失的旧菜谱：退化为所有批次均可扣（与旧行为兼容）
-    const eligible = completedAt
+    // 单位一致才可扣（g 与 克 互通）
+    const rp = parseQuantity(ri.quantity);
+    if (!rp) continue;
+
+    // 两阶段分摊：
+    // 阶段1 —— 仅「菜谱完成前」就已存在的批次承担扣减（FIFO，保护新买的批次不被旧菜谱误扣）。
+    // 阶段2 —— 若老批次扣完仍不够（如老柠檬 1个 + 新柠檬 1个，菜谱要 2个），
+    //          再动用「完成后」的新批次补足，避免老批次被误标「不够了」。
+    // completedAt 缺失的旧菜谱：退化为所有批次均可扣（与旧行为兼容）。
+    const prePools = completedAt
       ? pools.filter(p => !p.created || p.created <= completedAt)
       : pools;
-    if (eligible.length === 0) continue;
+    const postPools = completedAt
+      ? pools.filter(p => p.created && p.created > completedAt)
+      : [];
 
     let leftNum = needNum;
     let leftDen = needDen;
-    let lastTaker: Pool | null = null;
-    for (const pool of eligible) {
-      if (leftNum === 0) break;
-      // 单位一致才可扣（g 与 克 互通）
-      const rp = parseQuantity(ri.quantity);
-      if (!rp || !unitsMatch(pool.unit, rp.unit)) continue;
-      if (pool.num <= 0) continue;
+    let lastTakerId: string | null = null;
 
-      // take = min(批次余量, 剩余待扣量)
+    // 阶段1：仅「菜谱完成前」的批次（FIFO）
+    for (const pool of prePools) {
+      if (leftNum === 0) break;
+      if (!unitsMatch(pool.unit, rp.unit)) continue;
+      if (pool.num <= 0) continue;
       const poolVal = pool.num / pool.den;
       const leftVal = leftNum / leftDen;
-      let takeNum: number;
-      let takeDen: number;
-      if (poolVal <= leftVal) {
-        takeNum = pool.num; takeDen = pool.den;
-      } else {
-        takeNum = leftNum; takeDen = leftDen;
-      }
-
+      const takeNum = poolVal <= leftVal ? pool.num : leftNum;
+      const takeDen = poolVal <= leftVal ? pool.den : leftDen;
       const afterPool = subtractFraction(pool.num, pool.den, takeNum, takeDen);
       pool.num = afterPool.num; pool.den = afterPool.den;
       const afterLeft = subtractFraction(leftNum, leftDen, takeNum, takeDen);
       leftNum = afterLeft.num; leftDen = afterLeft.den;
-      lastTaker = pool;
-
+      lastTakerId = pool.item.id;
       const prev = deductions.get(pool.item.id) || { num: 0, den: 1 };
       deductions.set(pool.item.id, addFraction(prev.num, prev.den, takeNum, takeDen));
-
       let set = allocatedRecipeItemIds.get(pool.item.id);
-      if (!set) {
-        set = new Set<string>();
-        allocatedRecipeItemIds.set(pool.item.id, set);
-      }
+      if (!set) { set = new Set<string>(); allocatedRecipeItemIds.set(pool.item.id, set); }
       set.add(ri.id);
     }
-    // 所有批次扣完仍不够 → 最后承担扣减的批次标记「不够了」
-    if (leftNum > 0 && lastTaker) {
-      insufficientIds.add(lastTaker.item.id);
+    // 阶段2：老批次不够时，动用「完成后」的新批次补足
+    if (leftNum > 0) {
+      for (const pool of postPools) {
+        if (leftNum === 0) break;
+        if (!unitsMatch(pool.unit, rp.unit)) continue;
+        if (pool.num <= 0) continue;
+        const poolVal = pool.num / pool.den;
+        const leftVal = leftNum / leftDen;
+        const takeNum = poolVal <= leftVal ? pool.num : leftNum;
+        const takeDen = poolVal <= leftVal ? pool.den : leftDen;
+        const afterPool = subtractFraction(pool.num, pool.den, takeNum, takeDen);
+        pool.num = afterPool.num; pool.den = afterPool.den;
+        const afterLeft = subtractFraction(leftNum, leftDen, takeNum, takeDen);
+        leftNum = afterLeft.num; leftDen = afterLeft.den;
+        lastTakerId = pool.item.id;
+        const prev = deductions.get(pool.item.id) || { num: 0, den: 1 };
+        deductions.set(pool.item.id, addFraction(prev.num, prev.den, takeNum, takeDen));
+        let set = allocatedRecipeItemIds.get(pool.item.id);
+        if (!set) { set = new Set<string>(); allocatedRecipeItemIds.set(pool.item.id, set); }
+        set.add(ri.id);
+      }
+    }
+
+    // 所有批次（含新批次）扣完仍不够 → 最后承担扣减的批次标记「不够了」
+    if (leftNum > 0 && lastTakerId) {
+      insufficientIds.add(lastTakerId);
     }
   }
 
@@ -294,6 +313,45 @@ export function computeLossFromEdit(
   if (diff.num <= 0) return null;
   const quantity = formatQuantity(diff.num, diff.den, oldParsed.isFraction || oldParsed.isHalf) + oldParsed.unit;
   return { id, quantity, reason, createdAt: new Date().toISOString() };
+}
+
+// ===== 损耗量归一化：缺单位时借用基准单位；返回损耗记录的 quantity 文本 =====
+export function normalizeLossQuantity(lossText: string, baseQty: string): string {
+  const base = parseQuantity(baseQty);
+  const lp = parseQuantity(lossText);
+  if (!lp) return lossText.trim();
+  if (!lp.unit && base && base.unit) {
+    return formatQuantity(lp.numerator, lp.denominator, lp.isFraction || lp.isHalf) + base.unit;
+  }
+  return formatQuantity(lp.numerator, lp.denominator, lp.isFraction || lp.isHalf) + lp.unit;
+}
+
+// 构造一条损耗记录（损耗量 = 用户录入的 lossText，单位归一到基准）
+export function makeLossRecord(id: string, lossText: string, baseQty: string, reason: LossReason): PantryLoss {
+  return {
+    id,
+    quantity: normalizeLossQuantity(lossText, baseQty),
+    reason,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+// 重算损耗后的当前库存（不含 FIFO，FIFO 在显示层实时扣）：
+// 当前库存 = 采购基数 originalQuantity − 所有损耗量之和（单位一致才减，否则跳过该条）
+export function recomputeQuantityAfterLosses(item: PantryItem): string {
+  const base = parseQuantity(item.originalQuantity || item.quantity);
+  if (!base) return item.quantity;
+  let num = base.numerator;
+  let den = base.denominator;
+  let useFraction = base.isFraction || base.isHalf;
+  for (const l of item.losses || []) {
+    const lp = parseQuantity(l.quantity);
+    if (!lp || !unitsMatch(lp.unit, base.unit)) continue;
+    const r = subtractFraction(num, den, lp.numerator, lp.denominator);
+    num = r.num; den = r.den;
+  }
+  if (num < 0) { num = 0; den = 1; }
+  return formatQuantity(num, den, useFraction) + base.unit;
 }
 
 // ===== 撤销单条损耗登记（删除损耗记录并加回库存） =====
