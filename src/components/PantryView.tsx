@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { Plus, Circle, CheckCircle, X, Check, ChefHat, ShoppingCart, ExternalLink, LayoutGrid, List, Beef, Carrot, Wheat, Package } from 'lucide-react';
+import { Plus, Circle, CheckCircle, X, Check, ChefHat, ShoppingCart, ExternalLink, LayoutGrid, List, Beef, Carrot, Wheat, Package, Undo2, AlertTriangle } from 'lucide-react';
 import {
   DndContext, closestCenter, pointerWithin, PointerSensor, useSensor, useSensors, useDroppable, DragOverlay,
   type DragEndEvent, type DragStartEvent, type CollisionDetection,
@@ -10,7 +10,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import type { PantryItem, PantryDisplayInfo, PantryUsageInfo, PantryStatus, PantryCategory, LossReason, PantryLoss } from '../types';
 import { LOSS_REASON_LABELS } from '../types';
-import { quantitySubtract, parseQuantity } from '../lib/quantity';
+import { quantitySubtract, parseQuantity, subtractFraction, unitsMatch } from '../lib/quantity';
 import SwipeToDelete from './SwipeToDelete';
 
 // 四象限配置
@@ -44,11 +44,13 @@ interface PantryViewProps {
   onNavigateToRecipe: (recipeId: string) => void;
   onNavigateToCooking: () => void;
   onOpenCookingInNewTab: () => void;
+  undoInfo?: string | null;
+  onUndo: () => void;
 }
 
 export default function PantryView({
   pantryItems, getPantryDisplay, onCreatePantryItem, onEditPantryItem, onToggleChecked, onConvertToBuy,
-  onDeletePantryItem, onReorder, onReorderBatch, onSetCategory, onSetCategoryBatch, onNavigateToRecipe, onNavigateToCooking, onOpenCookingInNewTab,
+  onDeletePantryItem, onReorder, onReorderBatch, onSetCategory, onSetCategoryBatch,   onNavigateToRecipe, onNavigateToCooking, onOpenCookingInNewTab, undoInfo, onUndo,
 }: PantryViewProps) {
   const [newName, setNewName] = useState('');
   const [newQty, setNewQty] = useState('');
@@ -245,6 +247,22 @@ export default function PantryView({
 
   return (
     <div className="space-y-4">
+      {/* 常驻撤销条：任何增删改后显示，点「撤销」可回退，直到下一次操作或被撤销 */}
+      {undoInfo && (
+        <div className="sticky top-0 z-30 flex items-center justify-between gap-3 px-3 py-2.5 rounded-2xl bg-grape-600 text-white shadow-lg">
+          <div className="flex items-center gap-2 min-w-0">
+            <Undo2 size={16} className="shrink-0" />
+            <span className="text-sm truncate">已 {undoInfo} · 可撤销</span>
+          </div>
+          <button
+            onClick={onUndo}
+            className="shrink-0 px-3.5 py-1.5 rounded-lg bg-white text-grape-700 text-sm font-semibold hover:bg-grape-50 transition-colors"
+          >
+            撤销
+          </button>
+        </div>
+      )}
+
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -663,12 +681,12 @@ function SortablePantryItemCard({
   const isChecked = item.status === 'checked';
   const isRemaining = displayInfo.displayQuantity.startsWith('剩');
 
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = async (name: string, quantity: string | undefined, reason: LossReason | undefined) => {
     const updates: { name?: string; quantity?: string } = {};
-    if (editName.trim() && editName !== item.name) updates.name = editName.trim();
-    if (editQty.trim() !== item.quantity) updates.quantity = editQty.trim();
+    if (name.trim() && name !== item.name) updates.name = name.trim();
+    if (quantity !== undefined && quantity !== item.quantity) updates.quantity = quantity;
     if (Object.keys(updates).length > 0) {
-      await onEdit(item.id, updates, editLoss ? editLossReason : undefined);
+      await onEdit(item.id, updates, reason);
     } else {
       setEditName(item.name);
       setEditQty(item.quantity);
@@ -785,12 +803,12 @@ function PantryItemCard({
   const isChecked = item.status === 'checked';
   const isRemaining = displayInfo.displayQuantity.startsWith('剩');
 
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = async (name: string, quantity: string | undefined, reason: LossReason | undefined) => {
     const updates: { name?: string; quantity?: string } = {};
-    if (editName.trim() && editName !== item.name) updates.name = editName.trim();
-    if (editQty.trim() !== item.quantity) updates.quantity = editQty.trim();
+    if (name.trim() && name !== item.name) updates.name = name.trim();
+    if (quantity !== undefined && quantity !== item.quantity) updates.quantity = quantity;
     if (Object.keys(updates).length > 0) {
-      await onEdit(item.id, updates, editLoss ? editLossReason : undefined);
+      await onEdit(item.id, updates, reason);
     } else {
       setEditName(item.name);
       setEditQty(item.quantity);
@@ -878,12 +896,12 @@ function ToBuyItemCard({
   const [editLoss, setEditLoss] = useState(false);
   const [editLossReason, setEditLossReason] = useState<LossReason>('spoiled');
 
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = async (name: string, quantity: string | undefined, reason: LossReason | undefined) => {
     const updates: { name?: string; quantity?: string } = {};
-    if (editName.trim() && editName !== item.name) updates.name = editName.trim();
-    if (editQty.trim() !== item.quantity) updates.quantity = editQty.trim();
+    if (name.trim() && name !== item.name) updates.name = name.trim();
+    if (quantity !== undefined && quantity !== item.quantity) updates.quantity = quantity;
     if (Object.keys(updates).length > 0) {
-      await onEdit(item.id, updates, editLoss ? editLossReason : undefined);
+      await onEdit(item.id, updates, reason);
     } else {
       setEditName(item.name);
       setEditQty(item.quantity);
@@ -910,7 +928,7 @@ function ToBuyItemCard({
               value={editName}
               onChange={e => setEditName(e.target.value)}
               onKeyDown={e => {
-                if (e.key === 'Enter') handleSaveEdit();
+                if (e.key === 'Enter') handleSaveEdit(editName, editQty, undefined);
                 if (e.key === 'Escape') handleCancelEdit();
               }}
               autoFocus
@@ -921,13 +939,13 @@ function ToBuyItemCard({
               value={editQty}
               onChange={e => setEditQty(e.target.value)}
               onKeyDown={e => {
-                if (e.key === 'Enter') handleSaveEdit();
+                if (e.key === 'Enter') handleSaveEdit(editName, editQty, undefined);
                 if (e.key === 'Escape') handleCancelEdit();
               }}
               className="w-20 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
             />
             <button
-              onClick={handleSaveEdit}
+              onClick={() => handleSaveEdit(editName, editQty, undefined)}
               className="w-7 h-7 rounded-lg bg-grape-600 text-white flex items-center justify-center shrink-0"
             >
               <Check size={14} />
@@ -1015,8 +1033,9 @@ function UsageList({ usages, onNavigateToRecipe }: {
 
 // ===== 可复用的行内编辑区（名称 + 数量/损耗量 + 保存/取消 + 损耗标记） =====
 // 损耗语义翻转：勾选「标记为损耗」后，数量框的语义由「剩余量」变为「损耗量」。
-// 用户直接填坏了多少（如 100g），组件自动折算成剩余量存进 editQty（= baseQty − 损耗量），
-// 保存时仍按剩余量提交，hook 端据此计算损耗记录。这样用户无需心算减法。
+// 用户直接填坏了多少（如 60g）。剩余量在【保存时】用 baseQty − 损耗量 单一计算，
+// 不再每键把损耗量写回 editQty（旧实现来回同步，输入顺序异常时会把食材算成归零）。
+// 空损耗文本 = 不记损耗（纯改名/不改量）。
 
 function PantryEditRow({
   editName, editQty, editLoss, editLossReason, baseQty,
@@ -1031,33 +1050,47 @@ function PantryEditRow({
   onQty: (v: string) => void;
   onLossToggle: (v: boolean) => void;
   onLossReason: (v: LossReason) => void;
-  onSave: () => void;
+  onSave: (name: string, quantity: string | undefined, reason: LossReason | undefined) => void;
   onCancel: () => void;
 }) {
-  // 损耗模式下，输入框独立维护「损耗量」文本，避免逐字输入时显示抖动
-  const [lossText, setLossText] = useState(
-    editLoss ? (quantitySubtract(baseQty, editQty) ?? '') : ''
-  );
+  // 损耗量文本（损耗模式下唯一的编辑字段）
+  const [lossText, setLossText] = useState('');
 
-  // 进入损耗模式时，用当前剩余量反推损耗量作为初始显示
+  // 进入损耗模式时清空，让用户直接输入坏了多少（不再预填 0g，避免误以为已填）
   useEffect(() => {
-    if (editLoss) {
-      setLossText(quantitySubtract(baseQty, editQty) ?? '0' + (parseQuantity(baseQty)?.unit ?? ''));
-    }
-  }, [editLoss]); // 仅在勾选状态变化时同步，不随 editQty 每键重置
+    if (editLoss) setLossText('');
+  }, [editLoss]);
 
-  const handleLossText = (v: string) => {
-    setLossText(v);
-    // 把损耗量折算成剩余量回写 editQty（单位不匹配/解析失败则视为不损耗，剩 base）
-    const remaining = quantitySubtract(baseQty, v);
-    onQty(remaining ?? baseQty);
+  const handleLossText = (v: string) => setLossText(v);
+
+  // —— 单一数据源：剩余量 = 库存 − 损耗量（仅在展示/保存时计算，不回写 editQty）——
+  const remaining = editLoss
+    ? (quantitySubtract(baseQty, lossText || '0') ?? baseQty)
+    : editQty;
+
+  // 损耗是否超过库存（将归零）→ 醒目警告，避免静默灾难性扣减
+  const baseParsed = parseQuantity(baseQty);
+  const lossParsed = parseQuantity(lossText || '0');
+  const lossExceeds = editLoss && !!lossText.trim() && !!baseParsed && !!lossParsed &&
+    unitsMatch(baseParsed.unit, lossParsed.unit) &&
+    subtractFraction(baseParsed.numerator, baseParsed.denominator, lossParsed.numerator, lossParsed.denominator).num < 0;
+  // 损耗单位与库存不一致 → 无法计算，提示带相同单位
+  const lossMismatch = editLoss && !!lossText.trim() && !!baseParsed && !!lossParsed &&
+    !unitsMatch(baseParsed.unit, lossParsed.unit);
+
+  const handleSave = () => {
+    if (editLoss) {
+      // 损耗模式：提交剩余量；空损耗文本 = 不记损耗
+      const reason = lossText.trim() ? editLossReason : undefined;
+      onSave(editName, remaining, reason);
+    } else {
+      onSave(editName, editQty, undefined);
+    }
   };
 
-  // 损耗模式下的展示值：损耗量文本 + 「剩余将变为 X」提示
   const qtyValue = editLoss ? lossText : editQty;
   const qtyOnChange = editLoss ? handleLossText : onQty;
-  const qtyPlaceholder = editLoss ? '损耗量，如 100g' : '数量';
-  const remainPreview = editLoss ? (quantitySubtract(baseQty, lossText || '0') ?? baseQty) : null;
+  const qtyPlaceholder = editLoss ? '损耗量，如 60g' : '数量';
 
   return (
     <div className="flex-1 min-w-0 space-y-1.5" onPointerDown={e => e.stopPropagation()}>
@@ -1066,7 +1099,7 @@ function PantryEditRow({
           type="text"
           value={editName}
           onChange={e => onName(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') onSave(); if (e.key === 'Escape') onCancel(); }}
+          onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') onCancel(); }}
           autoFocus
           className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
         />
@@ -1074,14 +1107,14 @@ function PantryEditRow({
           type="text"
           value={qtyValue}
           onChange={e => qtyOnChange(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') onSave(); if (e.key === 'Escape') onCancel(); }}
+          onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') onCancel(); }}
           placeholder={qtyPlaceholder}
           className={`w-20 px-2 py-1 rounded-lg bg-white border text-sm focus:outline-none ${
             editLoss ? 'border-red-300 focus:border-red-400 text-red-600' : 'border-grape-400 focus:border-grape-500'
           }`}
         />
         <button
-          onClick={onSave}
+          onClick={handleSave}
           className="w-7 h-7 rounded-lg bg-grape-600 text-white flex items-center justify-center shrink-0"
         >
           <Check size={14} />
@@ -1103,20 +1136,32 @@ function PantryEditRow({
         标记为损耗（坏的 / 过期的）
       </label>
       {editLoss && (
-        <div className="flex items-center gap-2">
-          <select
-            value={editLossReason}
-            onChange={e => onLossReason(e.target.value as LossReason)}
-            className="px-2 py-1 rounded-lg bg-white border border-sage-200 text-xs text-sage-600 focus:outline-none focus:border-grape-400"
-          >
-            {(['spoiled', 'expired', 'overcooked', 'other'] as LossReason[]).map(r => (
-              <option key={r} value={r}>{LOSS_REASON_LABELS[r]}</option>
-            ))}
-          </select>
-          {remainPreview && (
-            <span className="text-[11px] text-sage-400">
-              损耗 {lossText || '0'} → 剩余 {remainPreview}
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={editLossReason}
+              onChange={e => onLossReason(e.target.value as LossReason)}
+              className="px-2 py-1 rounded-lg bg-white border border-sage-200 text-xs text-sage-600 focus:outline-none focus:border-grape-400"
+            >
+              {(['spoiled', 'expired', 'overcooked', 'other'] as LossReason[]).map(r => (
+                <option key={r} value={r}>{LOSS_REASON_LABELS[r]}</option>
+              ))}
+            </select>
+            <span className={`text-[11px] font-medium ${lossExceeds ? 'text-red-600' : 'text-sage-500'}`}>
+              损耗 {lossText || '0'} → 剩余 <span className={lossExceeds ? 'text-red-600 font-bold' : 'text-grape-600'}>{remaining}</span>
             </span>
+          </div>
+          {lossExceeds && (
+            <div className="flex items-center gap-1.5 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
+              <AlertTriangle size={12} className="shrink-0" />
+              损耗量≥库存，食材将归零。确认无误再保存，或点「撤销」回退。
+            </div>
+          )}
+          {lossMismatch && (
+            <div className="flex items-center gap-1.5 text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+              <AlertTriangle size={12} className="shrink-0" />
+              损耗单位与库存不一致（如库存写 500g、损耗写 2个），无法计算，请带相同单位。
+            </div>
           )}
         </div>
       )}
