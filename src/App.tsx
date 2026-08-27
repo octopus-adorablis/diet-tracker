@@ -122,6 +122,7 @@ function App() {
               onCreatePantryItem={pantryCooking.createPantryItem}
               onEditPantryItem={pantryCooking.editPantryItem}
               onToggleChecked={pantryCooking.toggleChecked}
+              onDeleteLoss={pantryCooking.removePantryLoss}
               onConvertToBuy={pantryCooking.convertToBuyToActive}
               onDeletePantryItem={pantryCooking.removePantryItem}
               onReorder={pantryCooking.reorderPantryItems}

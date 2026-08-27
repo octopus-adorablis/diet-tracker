@@ -12,9 +12,9 @@ import {
   addFraction, subtractFraction, unitsMatch,
 } from '../lib/quantity';
 import {
-  canonicalName, allocateCompletedUsage, buildVirtualToBuyItems, collectActiveNeededUsages, computeLossFromEdit,
+  canonicalName, allocateCompletedUsage, buildVirtualToBuyItems, collectActiveNeededUsages, computeLossFromEdit, revertLoss,
 } from '../lib/pantry-allocation';
-import type { PantryItem, Recipe, RecipeItem, RecipeItemWithMatch, PantryStatus, PantryCategory, PantryUsageInfo, PantryDisplayInfo, LossReason } from '../types';
+import type { PantryItem, Recipe, RecipeItem, RecipeItemWithMatch, PantryStatus, PantryCategory, PantryUsageInfo, PantryDisplayInfo, LossReason, PantryLoss } from '../types';
 
 const DEMO_PANTRY_KEY = 'diet_tracker_demo_pantry';
 const DEMO_RECIPES_KEY = 'diet_tracker_demo_recipes';
@@ -359,6 +359,42 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     pushUndo(`编辑"${oldItem.name}"`, async () => {
       await updatePantryItem(id, oldValues);
       setPantryItems(prev => prev.map(p => p.id === id ? { ...p, ...oldValues } : p));
+    });
+  }, [pantryItems, isDemo, configured, pushUndo]);
+
+  // 删除单条损耗记录：库存加回该损耗量，恢复到「登记这条损耗之前」
+  // 支持撤销（撤销 = 重新写回这条损耗记录 + 扣回该量）
+  const removePantryLoss = useCallback(async (id: string, lossId: string) => {
+    const oldItem = pantryItems.find(p => p.id === id);
+    if (!oldItem) return;
+    const result = revertLoss(oldItem, lossId);
+    if (!result) return;
+
+    const effectiveUpdates: Partial<PantryItem> = {
+      quantity: result.quantity,
+      originalQuantity: result.originalQuantity,
+      losses: result.losses,
+    };
+    const oldValues = {
+      quantity: oldItem.quantity,
+      originalQuantity: oldItem.originalQuantity,
+      losses: oldItem.losses || [],
+    };
+
+    const apply = async (values: Partial<PantryItem>) => {
+      if (isDemo || !configured) {
+        const updated = getDemoPantry().map(p => p.id === id ? { ...p, ...values } : p);
+        saveDemoPantry(updated);
+        setPantryItems(updated);
+      } else {
+        await updatePantryItem(id, values);
+        setPantryItems(prev => prev.map(p => p.id === id ? { ...p, ...values } : p));
+      }
+    };
+
+    await apply(effectiveUpdates);
+    pushUndo('删除损耗记录', async () => {
+      await apply(oldValues);
     });
   }, [pantryItems, isDemo, configured, pushUndo]);
 
@@ -1004,6 +1040,7 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     loading,
     createPantryItem,
     editPantryItem,
+    removePantryLoss,
     removePantryItem,
     toggleChecked,
     convertToBuyToActive,

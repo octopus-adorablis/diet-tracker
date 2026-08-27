@@ -296,6 +296,52 @@ export function computeLossFromEdit(
   return { id, quantity, reason, createdAt: new Date().toISOString() };
 }
 
+// ===== 撤销单条损耗登记（删除损耗记录并加回库存） =====
+// 场景：用户误登记了一条损耗（如本想记 60g，结果记成 640g 导致食材归零），
+// 希望删掉这条记录、让库存回到「登记这条损耗之前」。
+//
+// 数据模型：每次登记损耗时，editPantryItem 会把 originalQuantity 同步成「剩余量」
+// （即 originalQuantity 已被损耗覆盖，不再是真原始入库量）。但损耗记录是完整累加的，
+// 所以「真原始库存 = 当前库存 + 所有损耗量之和」。删除某条损耗 loss[i] 时：
+//   新库存 = 当前库存 + loss[i] 的量
+//   新 losses = losses 去掉 loss[i]
+// 删除全部损耗 → 加回全部损耗量 → 恢复到真原始库存。数学上可证一致。
+//
+// 单位不一致（如库存 500g、损耗记录 2个）则不串加，仅删除记录、不动数量，避免脏数据。
+export interface RevertLossResult {
+  quantity: string;
+  originalQuantity: string;
+  losses: PantryLoss[];
+}
+
+export function revertLoss(
+  item: PantryItem,
+  lossId: string,
+): RevertLossResult | null {
+  const losses = item.losses || [];
+  const target = losses.find(l => l.id === lossId);
+  if (!target) return null;
+
+  const recovered = parseQuantity(target.quantity);
+  const base = parseQuantity(item.originalQuantity || item.quantity);
+
+  let newQty = item.quantity;
+  let newOriginal = item.originalQuantity || item.quantity;
+  // 单位一致才把损耗量加回库存；否则只删记录、不串单位
+  if (recovered && base && unitsMatch(recovered.unit, base.unit)) {
+    const added = addFraction(base.numerator, base.denominator, recovered.numerator, recovered.denominator);
+    const str = formatQuantity(added.num, added.den, base.isFraction || base.isHalf) + base.unit;
+    newQty = str;
+    newOriginal = str;
+  }
+
+  return {
+    quantity: newQty,
+    originalQuantity: newOriginal,
+    losses: losses.filter(l => l.id !== lossId),
+  };
+}
+
 export function collectActiveNeededUsages(
   item: PantryItem,
   matchingRIs: RecipeItem[],

@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { Plus, Circle, CheckCircle, X, Check, ChefHat, ShoppingCart, ExternalLink, LayoutGrid, List, Beef, Carrot, Wheat, Package, Undo2, AlertTriangle } from 'lucide-react';
+import { Plus, Circle, CheckCircle, X, Check, ChefHat, ShoppingCart, ExternalLink, LayoutGrid, List, Beef, Carrot, Wheat, Package, Undo2, AlertTriangle, Pencil } from 'lucide-react';
 import {
   DndContext, closestCenter, pointerWithin, PointerSensor, useSensor, useSensors, useDroppable, DragOverlay,
   type DragEndEvent, type DragStartEvent, type CollisionDetection,
@@ -37,6 +37,7 @@ interface PantryViewProps {
   onToggleChecked: (id: string) => Promise<void>;
   onConvertToBuy: (id: string, quantity: string) => Promise<void>;
   onDeletePantryItem: (id: string) => Promise<void>;
+  onDeleteLoss: (id: string, lossId: string) => Promise<void>;
   onReorder: (activeList: PantryItem[], oldIndex: number, newIndex: number) => Promise<void>;
   onReorderBatch: (newOrder: PantryItem[]) => Promise<void>;
   onSetCategory: (id: string, category: PantryCategory) => Promise<void>;
@@ -50,7 +51,7 @@ interface PantryViewProps {
 
 export default function PantryView({
   pantryItems, getPantryDisplay, onCreatePantryItem, onEditPantryItem, onToggleChecked, onConvertToBuy,
-  onDeletePantryItem, onReorder, onReorderBatch, onSetCategory, onSetCategoryBatch,   onNavigateToRecipe, onNavigateToCooking, onOpenCookingInNewTab, undoInfo, onUndo,
+  onDeletePantryItem, onDeleteLoss, onReorder, onReorderBatch, onSetCategory, onSetCategoryBatch,   onNavigateToRecipe, onNavigateToCooking, onOpenCookingInNewTab, undoInfo, onUndo,
 }: PantryViewProps) {
   const [newName, setNewName] = useState('');
   const [newQty, setNewQty] = useState('');
@@ -384,11 +385,12 @@ export default function PantryView({
                     key={item.id}
                     item={item}
                     displayInfo={getPantryDisplay(item.id)}
-                    onToggleChecked={onToggleChecked}
-                    onEdit={onEditPantryItem}
-                    onDelete={onDeletePantryItem}
-                    onNavigateToRecipe={onNavigateToRecipe}
-                    selectionMode={false}
+                  onToggleChecked={onToggleChecked}
+                  onEdit={onEditPantryItem}
+                  onDelete={onDeletePantryItem}
+                  onDeleteLoss={onDeleteLoss}
+                  onNavigateToRecipe={onNavigateToRecipe}
+                  selectionMode={false}
                     isSelected={false}
                     onToggleSelect={() => {}}
                   />
@@ -432,11 +434,12 @@ export default function PantryView({
                     selectionMode={selectionMode}
                     selectedIds={selectedIds}
                     getPantryDisplay={getPantryDisplay}
-                    onToggleChecked={onToggleChecked}
-                    onEdit={onEditPantryItem}
-                    onDelete={onDeletePantryItem}
-                    onNavigateToRecipe={onNavigateToRecipe}
-                    onToggleSelect={toggleSelect}
+              onToggleChecked={onToggleChecked}
+              onEdit={onEditPantryItem}
+              onDelete={onDeletePantryItem}
+              onDeleteLoss={onDeleteLoss}
+              onNavigateToRecipe={onNavigateToRecipe}
+              onToggleSelect={toggleSelect}
                   />
                 );
               })}
@@ -492,6 +495,7 @@ export default function PantryView({
                   onToggleChecked={onToggleChecked}
                   onEdit={onEditPantryItem}
                   onDelete={onDeletePantryItem}
+                  onDeleteLoss={onDeleteLoss}
                   onNavigateToRecipe={onNavigateToRecipe}
                 />
               ))}
@@ -589,7 +593,7 @@ function OverlayCard({ item, count }: { item: PantryItem; count: number }) {
 
 function QuadrantZone({
   category, label, Icon, items, style, isDragging, selectionMode, selectedIds,
-  getPantryDisplay, onToggleChecked, onEdit, onDelete, onNavigateToRecipe, onToggleSelect,
+  getPantryDisplay, onToggleChecked, onEdit, onDelete, onDeleteLoss, onNavigateToRecipe, onToggleSelect,
 }: {
   category: PantryCategory;
   label: string;
@@ -605,6 +609,7 @@ function QuadrantZone({
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
   onToggleSelect: (id: string) => void;
+  onDeleteLoss: (id: string, lossId: string) => Promise<void>;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `quad-${category}` });
   return (
@@ -634,6 +639,7 @@ function QuadrantZone({
                 onToggleChecked={onToggleChecked}
                 onEdit={onEdit}
                 onDelete={onDelete}
+                onDeleteLoss={onDeleteLoss}
                 onNavigateToRecipe={onNavigateToRecipe}
                 selectionMode={selectionMode}
                 isSelected={selectedIds.has(item.id)}
@@ -655,7 +661,7 @@ function QuadrantZone({
 // ===== 可拖拽的现有食材卡片 =====
 
 function SortablePantryItemCard({
-  item, displayInfo, onToggleChecked, onEdit, onDelete, onNavigateToRecipe,
+  item, displayInfo, onToggleChecked, onEdit, onDelete, onDeleteLoss, onNavigateToRecipe,
   selectionMode, isSelected, onToggleSelect,
 }: {
   item: PantryItem;
@@ -663,6 +669,7 @@ function SortablePantryItemCard({
   onToggleChecked: (id: string) => void;
   onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason) => Promise<void>;
   onDelete: (id: string) => void;
+  onDeleteLoss: (id: string, lossId: string) => Promise<void>;
   onNavigateToRecipe: (recipeId: string) => void;
   selectionMode: boolean;
   isSelected: boolean;
@@ -753,25 +760,36 @@ function SortablePantryItemCard({
               onCancel={handleCancelEdit}
             />
           ) : (
-            <div
-              className="flex items-baseline gap-2 flex-1 min-w-0"
-              onDoubleClick={() => !selectionMode && setEditing(true)}
-            >
-              <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
-                {item.name}
-              </span>
-              <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
-                {displayInfo.displayQuantity}
-              </span>
-              {displayInfo.insufficient && (
-                <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <div
+                className="flex items-baseline gap-2 flex-1 min-w-0"
+                onDoubleClick={() => !selectionMode && setEditing(true)}
+              >
+                <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
+                  {item.name}
+                </span>
+                <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
+                  {displayInfo.displayQuantity}
+                </span>
+                {displayInfo.insufficient && (
+                  <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
+                )}
+              </div>
+              {!selectionMode && (
+                <button
+                  onClick={() => setEditing(true)}
+                  title="编辑数量 / 损耗"
+                  className="shrink-0 text-sage-300 hover:text-grape-500 transition-colors"
+                >
+                  <Pencil size={14} />
+                </button>
               )}
             </div>
           )}
         </div>
         {/* 损耗标注 */}
         {item.losses && item.losses.length > 0 && !editing && (
-          <LossList losses={item.losses} />
+          <LossList losses={item.losses} onDelete={(lossId) => onDeleteLoss(item.id, lossId)} />
         )}
         {/* 使用标注 */}
         {displayInfo.usages.length > 0 && !editing && (
@@ -785,13 +803,14 @@ function SortablePantryItemCard({
 // ===== 普通食材卡片（已用完区，不可拖拽） =====
 
 function PantryItemCard({
-  item, displayInfo, onToggleChecked, onEdit, onDelete, onNavigateToRecipe,
+  item, displayInfo, onToggleChecked, onEdit, onDelete, onDeleteLoss, onNavigateToRecipe,
 }: {
   item: PantryItem;
   displayInfo: PantryDisplayInfo;
   onToggleChecked: (id: string) => void;
   onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason) => Promise<void>;
   onDelete: (id: string) => void;
+  onDeleteLoss: (id: string, lossId: string) => Promise<void>;
   onNavigateToRecipe: (recipeId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -849,25 +868,34 @@ function PantryItemCard({
               onCancel={handleCancelEdit}
             />
           ) : (
-            <div
-              className="flex items-baseline gap-2 flex-1 min-w-0"
-              onDoubleClick={() => setEditing(true)}
-            >
-              <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
-                {item.name}
-              </span>
-              <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
-                {displayInfo.displayQuantity}
-              </span>
-              {displayInfo.insufficient && (
-                <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
-              )}
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <div
+                className="flex items-baseline gap-2 flex-1 min-w-0"
+                onDoubleClick={() => setEditing(true)}
+              >
+                <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
+                  {item.name}
+                </span>
+                <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
+                  {displayInfo.displayQuantity}
+                </span>
+                {displayInfo.insufficient && (
+                  <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
+                )}
+              </div>
+              <button
+                onClick={() => setEditing(true)}
+                title="编辑数量 / 损耗"
+                className="shrink-0 text-sage-300 hover:text-grape-500 transition-colors"
+              >
+                <Pencil size={14} />
+              </button>
             </div>
           )}
         </div>
         {/* 损耗标注 */}
         {item.losses && item.losses.length > 0 && !editing && (
-          <LossList losses={item.losses} />
+          <LossList losses={item.losses} onDelete={(lossId) => onDeleteLoss(item.id, lossId)} />
         )}
         {/* 使用标注 */}
         {displayInfo.usages.length > 0 && !editing && (
@@ -1209,7 +1237,7 @@ function formatRelativeDate(iso: string): string {
   return d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
 }
 
-function LossList({ losses }: { losses: PantryLoss[] }) {
+function LossList({ losses, onDelete }: { losses: PantryLoss[]; onDelete?: (lossId: string) => void }) {
   return (
     <div className="ml-8 mt-1.5 space-y-1">
       {losses.map(l => (
@@ -1220,6 +1248,15 @@ function LossList({ losses }: { losses: PantryLoss[] }) {
           <span>{LOSS_REASON_LABELS[l.reason]}</span>
           <span className="text-sage-300">·</span>
           <span className="text-sage-400">{formatRelativeDate(l.createdAt)}</span>
+          {onDelete && (
+            <button
+              onClick={() => onDelete(l.id)}
+              title="删除这条损耗记录（库存会加回）"
+              className="ml-0.5 text-sage-300 hover:text-red-500 transition-colors shrink-0"
+            >
+              <X size={12} />
+            </button>
+          )}
         </div>
       ))}
     </div>
