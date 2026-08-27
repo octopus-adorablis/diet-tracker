@@ -3,7 +3,7 @@
 // 导致同名食材存在多条记录（多批次）时重复扣减——新买的食材也会被历史菜谱扣到 0。
 // 正确语义：每份用量只扣一次，按购买时间（createdAt 升序）先扣最早的批次（FIFO），
 // 且只有「菜谱完成之前就已存在」的批次才承担该次扣减（之后买的是新批次）。
-import type { PantryItem, Recipe, RecipeItem, PantryStatus, PantryCategory, LossReason, PantryLoss } from '../types';
+import type { PantryItem, Recipe, RecipeItem, PantryStatus, PantryCategory } from '../types';
 import { parseQuantity, formatQuantity, unitsMatch, addFraction, subtractFraction } from './quantity';
 
 // 同义词归一化：不同写法的同一食材视为同一个，用于食材库与菜谱的匹配
@@ -65,7 +65,7 @@ export function allocateCompletedUsage(
   for (const item of realItems) {
     if (item.isVirtual || item.id.startsWith('virtual-')) continue;
     if (item.status !== 'active') continue;
-    const parsed = parseQuantity(item.quantity);
+    const parsed = parseQuantity(item.originalQuantity || item.quantity);
     if (!parsed) continue;
     const cName = canonicalName(item.name);
     if (!poolsByName.has(cName)) poolsByName.set(cName, []);
@@ -86,10 +86,8 @@ export function allocateCompletedUsage(
     const pools = poolsByName.get(canonicalName(ri.name));
     if (!pools || pools.length === 0) continue;
 
-    // 只有「菜谱完成前」就已存在的批次才承担扣减（FIFO，保护新买的批次不被历史菜谱误扣）。
-    // 这是关键的防回归约束：若允许历史已完成菜谱扣减「之后才买入」的新批次，
-    // 会导致大量新批次被旧菜谱扣到 0（曾在两阶段分摊改动中引发大面积库存清零）。
-    // completedAt 缺失的旧菜谱：退化为所有批次均可扣（与旧行为兼容）。
+    // 只有菜谱完成前就存在的批次才承担扣减（之后买的属于新批次，不被历史菜谱误扣）
+    // completedAt 缺失的旧菜谱：退化为所有批次均可扣（与旧行为兼容）
     const eligible = completedAt
       ? pools.filter(p => !p.created || p.created <= completedAt)
       : pools;
@@ -228,7 +226,7 @@ export function buildVirtualToBuyItems(
       let availDen = 1;
       let hasAny = false;
       for (const mi of matchingItems) {
-        const op = parseQuantity(mi.quantity);
+        const op = parseQuantity(mi.originalQuantity || mi.quantity);
         if (!op || !unitsMatch(op.unit, demand.unit)) continue;
 
         let remNum = op.numerator;
@@ -277,131 +275,6 @@ export interface ActiveNeededUsage {
   recipeId: string;
   recipeTitle: string;
   quantity: string;
-}
-
-// ===== 损耗计算（部分损耗，如变质/过期/做坏） =====
-// 编辑食材数量时，若新数量 < 旧数量且单位一致，则把"减少的部分"记成一条损耗记录。
-// 数量不变 / 增加（视为录入修正）则返回 null，不记损耗。
-export function computeLossFromEdit(
-  oldQty: string,
-  newQty: string,
-  reason: LossReason | undefined,
-  id: string,
-): PantryLoss | null {
-  if (!reason) return null; // 无原因 = 非损耗（普通修正数量），不记损耗
-  const oldParsed = parseQuantity(oldQty);
-  const newParsed = parseQuantity(newQty);
-  if (!oldParsed || !newParsed || !unitsMatch(oldParsed.unit, newParsed.unit)) return null;
-  const diff = subtractFraction(oldParsed.numerator, oldParsed.denominator, newParsed.numerator, newParsed.denominator);
-  if (diff.num <= 0) return null;
-  const quantity = formatQuantity(diff.num, diff.den, oldParsed.isFraction || oldParsed.isHalf) + oldParsed.unit;
-  return { id, quantity, reason, createdAt: new Date().toISOString() };
-}
-
-// ===== 损耗量归一化：缺单位时借用基准单位；返回损耗记录的 quantity 文本 =====
-export function normalizeLossQuantity(lossText: string, baseQty: string): string {
-  const base = parseQuantity(baseQty);
-  const lp = parseQuantity(lossText);
-  if (!lp) return lossText.trim();
-  if (!lp.unit && base && base.unit) {
-    return formatQuantity(lp.numerator, lp.denominator, lp.isFraction || lp.isHalf) + base.unit;
-  }
-  return formatQuantity(lp.numerator, lp.denominator, lp.isFraction || lp.isHalf) + lp.unit;
-}
-
-// 构造一条损耗记录（损耗量 = 用户录入的 lossText，单位归一到基准）
-export function makeLossRecord(id: string, lossText: string, baseQty: string, reason: LossReason): PantryLoss {
-  return {
-    id,
-    quantity: normalizeLossQuantity(lossText, baseQty),
-    reason,
-    createdAt: new Date().toISOString(),
-  };
-}
-
-// 重算损耗后的当前库存（不含 FIFO，FIFO 在显示层实时扣）：
-// 当前库存 = 采购基数 originalQuantity − 所有损耗量之和（单位一致才减，否则跳过该条）
-export function recomputeQuantityAfterLosses(item: PantryItem): string {
-  const base = parseQuantity(item.originalQuantity || item.quantity);
-  if (!base) return item.quantity;
-  let num = base.numerator;
-  let den = base.denominator;
-  let useFraction = base.isFraction || base.isHalf;
-  for (const l of item.losses || []) {
-    const lp = parseQuantity(l.quantity);
-    if (!lp || !unitsMatch(lp.unit, base.unit)) continue;
-    const r = subtractFraction(num, den, lp.numerator, lp.denominator);
-    num = r.num; den = r.den;
-  }
-  if (num < 0) { num = 0; den = 1; }
-  return formatQuantity(num, den, useFraction) + base.unit;
-}
-
-// ===== 损耗对「当前库存(item.quantity)」的加减 =====
-// 模型：quantity 是当前库存的唯一真相；记录一条损耗 = 从 quantity 扣减该量；
-// 删除一条损耗 = 把该量加回 quantity。不再依赖 originalQuantity（历史版本曾覆盖它导致重复扣减）。
-export function subtractLossFromStock(baseQty: string, lossQty: string): string {
-  const base = parseQuantity(baseQty);
-  const loss = parseQuantity(lossQty);
-  if (!base || !loss || !unitsMatch(base.unit, loss.unit)) return baseQty; // 单位不一致不串减
-  const r = subtractFraction(base.numerator, base.denominator, loss.numerator, loss.denominator);
-  const num = r.num < 0 ? 0 : r.num;
-  const den = r.num < 0 ? 1 : r.den;
-  return formatQuantity(num, den, base.isFraction || base.isHalf) + base.unit;
-}
-
-export function addLossToStock(baseQty: string, lossQty: string): string {
-  const base = parseQuantity(baseQty);
-  const loss = parseQuantity(lossQty);
-  if (!base || !loss || !unitsMatch(base.unit, loss.unit)) return baseQty;
-  const r = addFraction(base.numerator, base.denominator, loss.numerator, loss.denominator);
-  return formatQuantity(r.num, r.den, base.isFraction || base.isHalf) + base.unit;
-}
-
-// ===== 撤销单条损耗登记（删除损耗记录并加回库存） =====
-// 场景：用户误登记了一条损耗（如本想记 60g，结果记成 640g 导致食材归零），
-// 希望删掉这条记录、让库存回到「登记这条损耗之前」。
-//
-// 数据模型：每次登记损耗时，editPantryItem 会把 originalQuantity 同步成「剩余量」
-// （即 originalQuantity 已被损耗覆盖，不再是真原始入库量）。但损耗记录是完整累加的，
-// 所以「真原始库存 = 当前库存 + 所有损耗量之和」。删除某条损耗 loss[i] 时：
-//   新库存 = 当前库存 + loss[i] 的量
-//   新 losses = losses 去掉 loss[i]
-// 删除全部损耗 → 加回全部损耗量 → 恢复到真原始库存。数学上可证一致。
-//
-// 单位不一致（如库存 500g、损耗记录 2个）则不串加，仅删除记录、不动数量，避免脏数据。
-export interface RevertLossResult {
-  quantity: string;
-  originalQuantity: string;
-  losses: PantryLoss[];
-}
-
-export function revertLoss(
-  item: PantryItem,
-  lossId: string,
-): RevertLossResult | null {
-  const losses = item.losses || [];
-  const target = losses.find(l => l.id === lossId);
-  if (!target) return null;
-
-  const recovered = parseQuantity(target.quantity);
-  const base = parseQuantity(item.originalQuantity || item.quantity);
-
-  let newQty = item.quantity;
-  let newOriginal = item.originalQuantity || item.quantity;
-  // 单位一致才把损耗量加回库存；否则只删记录、不串单位
-  if (recovered && base && unitsMatch(recovered.unit, base.unit)) {
-    const added = addFraction(base.numerator, base.denominator, recovered.numerator, recovered.denominator);
-    const str = formatQuantity(added.num, added.den, base.isFraction || base.isHalf) + base.unit;
-    newQty = str;
-    newOriginal = str;
-  }
-
-  return {
-    quantity: newQty,
-    originalQuantity: newOriginal,
-    losses: losses.filter(l => l.id !== lossId),
-  };
 }
 
 export function collectActiveNeededUsages(

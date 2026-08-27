@@ -11,7 +11,7 @@ import StatsView from './components/StatsView';
 import AddMealModal from './components/AddMealModal';
 import PantryView from './components/PantryView';
 import CookingView from './components/CookingView';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Undo2 } from 'lucide-react';
 
 // hash ↔ 视图映射
 function viewToHash(view: ViewMode): string {
@@ -30,6 +30,23 @@ function App() {
   const { meals, loading: mealsLoading, createMeal, removeMeal } = useMeals(user?.id, isDemo);
   const pantryCooking = usePantryCooking(user?.id, isDemo);
   const { undoInfo, undo } = pantryCooking;
+  const [showUndoToast, setShowUndoToast] = useState(false);
+
+  // undoInfo 变化时显示 toast，5 秒后自动隐藏
+  useEffect(() => {
+    if (undoInfo) {
+      setShowUndoToast(true);
+      const timer = setTimeout(() => setShowUndoToast(false), 5000);
+      return () => clearTimeout(timer);
+    } else {
+      setShowUndoToast(false);
+    }
+  }, [undoInfo]);
+
+  const handleUndo = async () => {
+    setShowUndoToast(false);
+    await undo();
+  };
   const [currentView, setCurrentView] = useState<ViewMode>(() => {
     return hashToView(window.location.hash) || 'calendar';
   });
@@ -122,7 +139,6 @@ function App() {
               onCreatePantryItem={pantryCooking.createPantryItem}
               onEditPantryItem={pantryCooking.editPantryItem}
               onToggleChecked={pantryCooking.toggleChecked}
-              onDeleteLoss={pantryCooking.removePantryLoss}
               onConvertToBuy={pantryCooking.convertToBuyToActive}
               onDeletePantryItem={pantryCooking.removePantryItem}
               onReorder={pantryCooking.reorderPantryItems}
@@ -132,8 +148,6 @@ function App() {
               onNavigateToRecipe={(recipeId) => navigateToCooking(recipeId)}
               onNavigateToCooking={() => navigateToCooking()}
               onOpenCookingInNewTab={() => openInNewTab('cooking')}
-              undoInfo={undoInfo}
-              onUndo={undo}
             />
           ) : (
             <CookingView
@@ -172,6 +186,20 @@ function App() {
           onClose={() => setShowAddModal(false)}
           onAdd={handleAddMeal}
         />
+      )}
+
+      {/* Undo Toast */}
+      {showUndoToast && undoInfo && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <button
+            onClick={handleUndo}
+            className="flex items-center gap-2 px-4 py-2.5 bg-grape-600 text-white rounded-full shadow-lg hover:bg-grape-700 transition-colors text-sm"
+          >
+            <Undo2 size={16} />
+            <span>撤销 · {undoInfo}</span>
+            <kbd className="px-1.5 py-0.5 bg-grape-700/50 rounded text-xs">⌘Z</kbd>
+          </button>
+        </div>
       )}
     </div>
   );

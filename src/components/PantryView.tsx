@@ -1,5 +1,5 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
-import { Plus, Circle, CheckCircle, X, Check, ChefHat, ShoppingCart, ExternalLink, LayoutGrid, List, Beef, Carrot, Wheat, Package, Undo2, AlertTriangle, Pencil } from 'lucide-react';
+import { useState, useMemo, useRef } from 'react';
+import { Plus, Circle, CheckCircle, X, Check, ChefHat, ShoppingCart, ExternalLink, LayoutGrid, List, Beef, Carrot, Wheat, Package } from 'lucide-react';
 import {
   DndContext, closestCenter, pointerWithin, PointerSensor, useSensor, useSensors, useDroppable, DragOverlay,
   type DragEndEvent, type DragStartEvent, type CollisionDetection,
@@ -8,9 +8,7 @@ import {
   SortableContext, useSortable, verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { PantryItem, PantryDisplayInfo, PantryUsageInfo, PantryStatus, PantryCategory, LossReason, PantryLoss } from '../types';
-import { LOSS_REASON_LABELS } from '../types';
-import { quantitySubtract, parseQuantity, subtractFraction, unitsMatch } from '../lib/quantity';
+import type { PantryItem, PantryDisplayInfo, PantryUsageInfo, PantryStatus, PantryCategory } from '../types';
 import SwipeToDelete from './SwipeToDelete';
 
 // 四象限配置
@@ -33,11 +31,10 @@ interface PantryViewProps {
   pantryItems: PantryItem[];
   getPantryDisplay: (id: string) => PantryDisplayInfo;
   onCreatePantryItem: (name: string, quantity: string, status: PantryStatus) => Promise<void>;
-  onEditPantryItem: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason, lossQuantity?: string) => Promise<void>;
+  onEditPantryItem: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onToggleChecked: (id: string) => Promise<void>;
   onConvertToBuy: (id: string, quantity: string) => Promise<void>;
   onDeletePantryItem: (id: string) => Promise<void>;
-  onDeleteLoss: (id: string, lossId: string) => Promise<void>;
   onReorder: (activeList: PantryItem[], oldIndex: number, newIndex: number) => Promise<void>;
   onReorderBatch: (newOrder: PantryItem[]) => Promise<void>;
   onSetCategory: (id: string, category: PantryCategory) => Promise<void>;
@@ -45,13 +42,11 @@ interface PantryViewProps {
   onNavigateToRecipe: (recipeId: string) => void;
   onNavigateToCooking: () => void;
   onOpenCookingInNewTab: () => void;
-  undoInfo?: string | null;
-  onUndo: () => void;
 }
 
 export default function PantryView({
   pantryItems, getPantryDisplay, onCreatePantryItem, onEditPantryItem, onToggleChecked, onConvertToBuy,
-  onDeletePantryItem, onDeleteLoss, onReorder, onReorderBatch, onSetCategory, onSetCategoryBatch,   onNavigateToRecipe, onNavigateToCooking, onOpenCookingInNewTab, undoInfo, onUndo,
+  onDeletePantryItem, onReorder, onReorderBatch, onSetCategory, onSetCategoryBatch, onNavigateToRecipe, onNavigateToCooking, onOpenCookingInNewTab,
 }: PantryViewProps) {
   const [newName, setNewName] = useState('');
   const [newQty, setNewQty] = useState('');
@@ -248,22 +243,6 @@ export default function PantryView({
 
   return (
     <div className="space-y-4">
-      {/* 常驻撤销条：任何增删改后显示，点「撤销」可回退，直到下一次操作或被撤销 */}
-      {undoInfo && (
-        <div className="sticky top-0 z-30 flex items-center justify-between gap-3 px-3 py-2.5 rounded-2xl bg-grape-600 text-white shadow-lg">
-          <div className="flex items-center gap-2 min-w-0">
-            <Undo2 size={16} className="shrink-0" />
-            <span className="text-sm truncate">已 {undoInfo} · 可撤销</span>
-          </div>
-          <button
-            onClick={onUndo}
-            className="shrink-0 px-3.5 py-1.5 rounded-lg bg-white text-grape-700 text-sm font-semibold hover:bg-grape-50 transition-colors"
-          >
-            撤销
-          </button>
-        </div>
-      )}
-
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -385,12 +364,11 @@ export default function PantryView({
                     key={item.id}
                     item={item}
                     displayInfo={getPantryDisplay(item.id)}
-                  onToggleChecked={onToggleChecked}
-                  onEdit={onEditPantryItem}
-                  onDelete={onDeletePantryItem}
-                  onDeleteLoss={onDeleteLoss}
-                  onNavigateToRecipe={onNavigateToRecipe}
-                  selectionMode={false}
+                    onToggleChecked={onToggleChecked}
+                    onEdit={onEditPantryItem}
+                    onDelete={onDeletePantryItem}
+                    onNavigateToRecipe={onNavigateToRecipe}
+                    selectionMode={false}
                     isSelected={false}
                     onToggleSelect={() => {}}
                   />
@@ -434,12 +412,11 @@ export default function PantryView({
                     selectionMode={selectionMode}
                     selectedIds={selectedIds}
                     getPantryDisplay={getPantryDisplay}
-              onToggleChecked={onToggleChecked}
-              onEdit={onEditPantryItem}
-              onDelete={onDeletePantryItem}
-              onDeleteLoss={onDeleteLoss}
-              onNavigateToRecipe={onNavigateToRecipe}
-              onToggleSelect={toggleSelect}
+                    onToggleChecked={onToggleChecked}
+                    onEdit={onEditPantryItem}
+                    onDelete={onDeletePantryItem}
+                    onNavigateToRecipe={onNavigateToRecipe}
+                    onToggleSelect={toggleSelect}
                   />
                 );
               })}
@@ -495,7 +472,6 @@ export default function PantryView({
                   onToggleChecked={onToggleChecked}
                   onEdit={onEditPantryItem}
                   onDelete={onDeletePantryItem}
-                  onDeleteLoss={onDeleteLoss}
                   onNavigateToRecipe={onNavigateToRecipe}
                 />
               ))}
@@ -593,7 +569,7 @@ function OverlayCard({ item, count }: { item: PantryItem; count: number }) {
 
 function QuadrantZone({
   category, label, Icon, items, style, isDragging, selectionMode, selectedIds,
-  getPantryDisplay, onToggleChecked, onEdit, onDelete, onDeleteLoss, onNavigateToRecipe, onToggleSelect,
+  getPantryDisplay, onToggleChecked, onEdit, onDelete, onNavigateToRecipe, onToggleSelect,
 }: {
   category: PantryCategory;
   label: string;
@@ -605,11 +581,10 @@ function QuadrantZone({
   selectedIds: Set<string>;
   getPantryDisplay: (id: string) => PantryDisplayInfo;
   onToggleChecked: (id: string) => void;
-  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason, lossQuantity?: string) => Promise<void>;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
   onToggleSelect: (id: string) => void;
-  onDeleteLoss: (id: string, lossId: string) => Promise<void>;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `quad-${category}` });
   return (
@@ -639,7 +614,6 @@ function QuadrantZone({
                 onToggleChecked={onToggleChecked}
                 onEdit={onEdit}
                 onDelete={onDelete}
-                onDeleteLoss={onDeleteLoss}
                 onNavigateToRecipe={onNavigateToRecipe}
                 selectionMode={selectionMode}
                 isSelected={selectedIds.has(item.id)}
@@ -661,15 +635,14 @@ function QuadrantZone({
 // ===== 可拖拽的现有食材卡片 =====
 
 function SortablePantryItemCard({
-  item, displayInfo, onToggleChecked, onEdit, onDelete, onDeleteLoss, onNavigateToRecipe,
+  item, displayInfo, onToggleChecked, onEdit, onDelete, onNavigateToRecipe,
   selectionMode, isSelected, onToggleSelect,
 }: {
   item: PantryItem;
   displayInfo: PantryDisplayInfo;
   onToggleChecked: (id: string) => void;
-  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason, lossQuantity?: string) => Promise<void>;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDelete: (id: string) => void;
-  onDeleteLoss: (id: string, lossId: string) => Promise<void>;
   onNavigateToRecipe: (recipeId: string) => void;
   selectionMode: boolean;
   isSelected: boolean;
@@ -682,18 +655,16 @@ function SortablePantryItemCard({
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(item.name);
   const [editQty, setEditQty] = useState(item.quantity);
-  const [editLoss, setEditLoss] = useState(false);
-  const [editLossReason, setEditLossReason] = useState<LossReason>('spoiled');
 
   const isChecked = item.status === 'checked';
   const isRemaining = displayInfo.displayQuantity.startsWith('剩');
 
-  const handleSaveEdit = async (name: string, quantity: string | undefined, reason: LossReason | undefined, lossText?: string) => {
+  const handleSaveEdit = async () => {
     const updates: { name?: string; quantity?: string } = {};
-    if (name.trim() && name !== item.name) updates.name = name.trim();
-    if (quantity !== undefined && quantity !== item.quantity) updates.quantity = quantity;
+    if (editName.trim() && editName !== item.name) updates.name = editName.trim();
+    if (editQty.trim() !== item.quantity) updates.quantity = editQty.trim();
     if (Object.keys(updates).length > 0) {
-      await onEdit(item.id, updates, reason, lossText);
+      await onEdit(item.id, updates);
     } else {
       setEditName(item.name);
       setEditQty(item.quantity);
@@ -704,8 +675,6 @@ function SortablePantryItemCard({
   const handleCancelEdit = () => {
     setEditName(item.name);
     setEditQty(item.quantity);
-    setEditLoss(false);
-    setEditLossReason('spoiled');
     setEditing(false);
   };
 
@@ -746,51 +715,58 @@ function SortablePantryItemCard({
             </button>
           )}
           {editing ? (
-            <PantryEditRow
-              editName={editName}
-              editQty={editQty}
-              editLoss={editLoss}
-              editLossReason={editLossReason}
-              baseQty={displayInfo.displayQuantity}
-              onName={setEditName}
-              onQty={setEditQty}
-              onLossToggle={setEditLoss}
-              onLossReason={setEditLossReason}
-              onSave={handleSaveEdit}
-              onCancel={handleCancelEdit}
-            />
-          ) : (
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              <div
-                className="flex items-baseline gap-2 flex-1 min-w-0"
-                onDoubleClick={() => !selectionMode && setEditing(true)}
+            <div className="flex items-center gap-2 flex-1 min-w-0" onPointerDown={e => e.stopPropagation()}>
+              <input
+                type="text"
+                value={editName}
+                onChange={e => setEditName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleSaveEdit();
+                  if (e.key === 'Escape') handleCancelEdit();
+                }}
+                autoFocus
+                className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+              />
+              <input
+                type="text"
+                value={editQty}
+                onChange={e => setEditQty(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleSaveEdit();
+                  if (e.key === 'Escape') handleCancelEdit();
+                }}
+                className="w-20 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+              />
+              <button
+                onClick={handleSaveEdit}
+                className="w-7 h-7 rounded-lg bg-grape-600 text-white flex items-center justify-center shrink-0"
               >
-                <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
-                  {item.name}
-                </span>
-                <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
-                  {displayInfo.displayQuantity}
-                </span>
-                {displayInfo.insufficient && (
-                  <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
-                )}
-              </div>
-              {!selectionMode && (
-                <button
-                  onClick={() => setEditing(true)}
-                  title="编辑数量 / 损耗"
-                  className="shrink-0 text-sage-300 hover:text-grape-500 transition-colors"
-                >
-                  <Pencil size={14} />
-                </button>
+                <Check size={14} />
+              </button>
+              <button
+                onClick={handleCancelEdit}
+                className="w-7 h-7 rounded-lg text-sage-400 hover:bg-sage-100 flex items-center justify-center shrink-0"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <div
+              className="flex items-baseline gap-2 flex-1 min-w-0"
+              onDoubleClick={() => !selectionMode && setEditing(true)}
+            >
+              <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
+                {item.name}
+              </span>
+              <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
+                {displayInfo.displayQuantity}
+              </span>
+              {displayInfo.insufficient && (
+                <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
               )}
             </div>
           )}
         </div>
-        {/* 损耗标注 */}
-        {item.losses && item.losses.length > 0 && !editing && (
-          <LossList losses={item.losses} onDelete={(lossId) => onDeleteLoss(item.id, lossId)} />
-        )}
         {/* 使用标注 */}
         {displayInfo.usages.length > 0 && !editing && (
           <UsageList usages={displayInfo.usages} onNavigateToRecipe={onNavigateToRecipe} />
@@ -803,31 +779,28 @@ function SortablePantryItemCard({
 // ===== 普通食材卡片（已用完区，不可拖拽） =====
 
 function PantryItemCard({
-  item, displayInfo, onToggleChecked, onEdit, onDelete, onDeleteLoss, onNavigateToRecipe,
+  item, displayInfo, onToggleChecked, onEdit, onDelete, onNavigateToRecipe,
 }: {
   item: PantryItem;
   displayInfo: PantryDisplayInfo;
   onToggleChecked: (id: string) => void;
-  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason, lossQuantity?: string) => Promise<void>;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDelete: (id: string) => void;
-  onDeleteLoss: (id: string, lossId: string) => Promise<void>;
   onNavigateToRecipe: (recipeId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(item.name);
   const [editQty, setEditQty] = useState(item.quantity);
-  const [editLoss, setEditLoss] = useState(false);
-  const [editLossReason, setEditLossReason] = useState<LossReason>('spoiled');
 
   const isChecked = item.status === 'checked';
   const isRemaining = displayInfo.displayQuantity.startsWith('剩');
 
-  const handleSaveEdit = async (name: string, quantity: string | undefined, reason: LossReason | undefined, lossText?: string) => {
+  const handleSaveEdit = async () => {
     const updates: { name?: string; quantity?: string } = {};
-    if (name.trim() && name !== item.name) updates.name = name.trim();
-    if (quantity !== undefined && quantity !== item.quantity) updates.quantity = quantity;
+    if (editName.trim() && editName !== item.name) updates.name = editName.trim();
+    if (editQty.trim() !== item.quantity) updates.quantity = editQty.trim();
     if (Object.keys(updates).length > 0) {
-      await onEdit(item.id, updates, reason, lossText);
+      await onEdit(item.id, updates);
     } else {
       setEditName(item.name);
       setEditQty(item.quantity);
@@ -838,8 +811,6 @@ function PantryItemCard({
   const handleCancelEdit = () => {
     setEditName(item.name);
     setEditQty(item.quantity);
-    setEditLoss(false);
-    setEditLossReason('spoiled');
     setEditing(false);
   };
 
@@ -854,49 +825,58 @@ function PantryItemCard({
             {isChecked ? <CheckCircle size={20} className="text-sage-400" /> : <Circle size={20} />}
           </button>
           {editing ? (
-            <PantryEditRow
-              editName={editName}
-              editQty={editQty}
-              editLoss={editLoss}
-              editLossReason={editLossReason}
-              baseQty={displayInfo.displayQuantity}
-              onName={setEditName}
-              onQty={setEditQty}
-              onLossToggle={setEditLoss}
-              onLossReason={setEditLossReason}
-              onSave={handleSaveEdit}
-              onCancel={handleCancelEdit}
-            />
-          ) : (
             <div className="flex items-center gap-2 flex-1 min-w-0">
-              <div
-                className="flex items-baseline gap-2 flex-1 min-w-0"
-                onDoubleClick={() => setEditing(true)}
-              >
-                <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
-                  {item.name}
-                </span>
-                <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
-                  {displayInfo.displayQuantity}
-                </span>
-                {displayInfo.insufficient && (
-                  <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
-                )}
-              </div>
+              <input
+                type="text"
+                value={editName}
+                onChange={e => setEditName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleSaveEdit();
+                  if (e.key === 'Escape') handleCancelEdit();
+                }}
+                autoFocus
+                className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+              />
+              <input
+                type="text"
+                value={editQty}
+                onChange={e => setEditQty(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleSaveEdit();
+                  if (e.key === 'Escape') handleCancelEdit();
+                }}
+                className="w-20 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+              />
               <button
-                onClick={() => setEditing(true)}
-                title="编辑数量 / 损耗"
-                className="shrink-0 text-sage-300 hover:text-grape-500 transition-colors"
+                onClick={handleSaveEdit}
+                className="w-7 h-7 rounded-lg bg-grape-600 text-white flex items-center justify-center shrink-0"
               >
-                <Pencil size={14} />
+                <Check size={14} />
               </button>
+              <button
+                onClick={handleCancelEdit}
+                className="w-7 h-7 rounded-lg text-sage-400 hover:bg-sage-100 flex items-center justify-center shrink-0"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <div
+              className="flex items-baseline gap-2 flex-1 min-w-0"
+              onDoubleClick={() => setEditing(true)}
+            >
+              <span className={`text-sm font-medium ${isChecked ? 'text-sage-400 line-through' : 'text-sage-800'}`}>
+                {item.name}
+              </span>
+              <span className={`text-sm ${isRemaining ? 'text-grape-600 font-medium' : isChecked ? 'text-sage-400 line-through' : 'text-sage-500'}`}>
+                {displayInfo.displayQuantity}
+              </span>
+              {displayInfo.insufficient && (
+                <span className="text-xs text-red-500 font-medium shrink-0">不够了</span>
+              )}
             </div>
           )}
         </div>
-        {/* 损耗标注 */}
-        {item.losses && item.losses.length > 0 && !editing && (
-          <LossList losses={item.losses} onDelete={(lossId) => onDeleteLoss(item.id, lossId)} />
-        )}
         {/* 使用标注 */}
         {displayInfo.usages.length > 0 && !editing && (
           <UsageList usages={displayInfo.usages} onNavigateToRecipe={onNavigateToRecipe} />
@@ -914,22 +894,20 @@ function ToBuyItemCard({
   item: PantryItem;
   displayInfo: PantryDisplayInfo;
   onBuyClick: (item: PantryItem) => void;
-  onEdit: (id: string, updates: { name?: string; quantity?: string }, lossReason?: LossReason, lossQuantity?: string) => Promise<void>;
+  onEdit: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDelete: (id: string) => void;
   onNavigateToRecipe: (recipeId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(item.name);
   const [editQty, setEditQty] = useState(item.quantity);
-  const [editLoss, setEditLoss] = useState(false);
-  const [editLossReason, setEditLossReason] = useState<LossReason>('spoiled');
 
-  const handleSaveEdit = async (name: string, quantity: string | undefined, reason: LossReason | undefined, lossText?: string) => {
+  const handleSaveEdit = async () => {
     const updates: { name?: string; quantity?: string } = {};
-    if (name.trim() && name !== item.name) updates.name = name.trim();
-    if (quantity !== undefined && quantity !== item.quantity) updates.quantity = quantity;
+    if (editName.trim() && editName !== item.name) updates.name = editName.trim();
+    if (editQty.trim() !== item.quantity) updates.quantity = editQty.trim();
     if (Object.keys(updates).length > 0) {
-      await onEdit(item.id, updates, reason, lossText);
+      await onEdit(item.id, updates);
     } else {
       setEditName(item.name);
       setEditQty(item.quantity);
@@ -940,8 +918,6 @@ function ToBuyItemCard({
   const handleCancelEdit = () => {
     setEditName(item.name);
     setEditQty(item.quantity);
-    setEditLoss(false);
-    setEditLossReason('spoiled');
     setEditing(false);
   };
 
@@ -956,7 +932,7 @@ function ToBuyItemCard({
               value={editName}
               onChange={e => setEditName(e.target.value)}
               onKeyDown={e => {
-                if (e.key === 'Enter') handleSaveEdit(editName, editQty, undefined);
+                if (e.key === 'Enter') handleSaveEdit();
                 if (e.key === 'Escape') handleCancelEdit();
               }}
               autoFocus
@@ -967,13 +943,13 @@ function ToBuyItemCard({
               value={editQty}
               onChange={e => setEditQty(e.target.value)}
               onKeyDown={e => {
-                if (e.key === 'Enter') handleSaveEdit(editName, editQty, undefined);
+                if (e.key === 'Enter') handleSaveEdit();
                 if (e.key === 'Escape') handleCancelEdit();
               }}
               className="w-20 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
             />
             <button
-              onClick={() => handleSaveEdit(editName, editQty, undefined)}
+              onClick={handleSaveEdit}
               className="w-7 h-7 rounded-lg bg-grape-600 text-white flex items-center justify-center shrink-0"
             >
               <Check size={14} />
@@ -1053,210 +1029,6 @@ function UsageList({ usages, onNavigateToRecipe }: {
           >
             {u.recipeTitle}
           </button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ===== 可复用的行内编辑区（名称 + 数量/损耗量 + 保存/取消 + 损耗标记） =====
-// 损耗语义翻转：勾选「标记为损耗」后，数量框的语义由「剩余量」变为「损耗量」。
-// 用户直接填坏了多少（如 60g）。剩余量在【保存时】用 baseQty − 损耗量 单一计算，
-// 不再每键把损耗量写回 editQty（旧实现来回同步，输入顺序异常时会把食材算成归零）。
-// 空损耗文本 = 不记损耗（纯改名/不改量）。
-
-function PantryEditRow({
-  editName, editQty, editLoss, editLossReason, baseQty,
-  onName, onQty, onLossToggle, onLossReason, onSave, onCancel,
-}: {
-  editName: string;
-  editQty: string;
-  editLoss: boolean;
-  editLossReason: LossReason;
-  baseQty: string;
-  onName: (v: string) => void;
-  onQty: (v: string) => void;
-  onLossToggle: (v: boolean) => void;
-  onLossReason: (v: LossReason) => void;
-  onSave: (name: string, quantity: string | undefined, reason: LossReason | undefined, lossText?: string) => void;
-  onCancel: () => void;
-}) {
-  // 损耗量文本（损耗模式下唯一的编辑字段）
-  const [lossText, setLossText] = useState('');
-
-  // 进入损耗模式时清空，让用户直接输入坏了多少（不再预填 0g，避免误以为已填）
-  useEffect(() => {
-    if (editLoss) setLossText('');
-  }, [editLoss]);
-
-  const handleLossText = (v: string) => setLossText(v);
-
-  // —— 单一数据源：剩余量 = 库存 − 损耗量（仅在展示/保存时计算，不回写 editQty）——
-  const remaining = editLoss
-    ? (quantitySubtract(baseQty, lossText || '0') ?? baseQty)
-    : editQty;
-
-  // 损耗是否超过库存（将归零）→ 醒目警告，避免静默灾难性扣减
-  const baseParsed = parseQuantity(baseQty);
-  const lossParsed = parseQuantity(lossText || '0');
-  const lossExceeds = editLoss && !!lossText.trim() && !!baseParsed && !!lossParsed &&
-    unitsMatch(baseParsed.unit, lossParsed.unit) &&
-    subtractFraction(baseParsed.numerator, baseParsed.denominator, lossParsed.numerator, lossParsed.denominator).num < 0;
-  // 损耗单位与库存不一致 → 无法计算，提示带相同单位
-  const lossMismatch = editLoss && !!lossText.trim() && !!baseParsed && !!lossParsed &&
-    !unitsMatch(baseParsed.unit, lossParsed.unit);
-
-  // 大损耗二次确认：损耗量 >100 或超过库存 30% 时弹窗，避免手误把 60g 输成 640g
-  const shouldConfirmLoss = editLoss && !!lossText.trim() && !!baseParsed && !!lossParsed &&
-    unitsMatch(baseParsed.unit, lossParsed.unit) &&
-    baseParsed.number > 0 &&
-    (lossParsed.number > 100 || lossParsed.number / baseParsed.number > 0.3);
-
-  const handleSave = () => {
-    if (editLoss) {
-      // 损耗模式：提交剩余量 + 损耗量（精确录入值，不靠 originalQuantity 反推）；空损耗文本 = 不记损耗
-      const reason = lossText.trim() ? editLossReason : undefined;
-      if (shouldConfirmLoss) {
-        const msg = `确认记录「${editName || '该食材'}」损耗 ${lossText} 吗？\n保存后剩余将变为 ${remaining}，且会加入损耗记录。\n\n如果只是想修改数量（不是损耗），请取消勾选「标记为损耗」后再保存。`;
-        if (!window.confirm(msg)) return;
-      }
-      onSave(editName, remaining, reason, lossText);
-    } else {
-      onSave(editName, editQty, undefined, undefined);
-    }
-  };
-
-  const qtyValue = editLoss ? lossText : editQty;
-  const qtyOnChange = editLoss ? handleLossText : onQty;
-
-  return (
-    <div className="flex-1 min-w-0 space-y-1.5" onPointerDown={e => e.stopPropagation()}>
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={editName}
-          onChange={e => onName(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') onCancel(); }}
-          autoFocus
-          className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
-        />
-        <div className={`flex items-center gap-1 px-2 py-1 rounded-lg bg-white border text-sm ${
-          editLoss ? 'border-red-300 focus-within:border-red-400' : 'border-grape-400 focus-within:border-grape-500'
-        }`}>
-          {editLoss && (
-            <span className="text-xs text-red-500 whitespace-nowrap select-none">损耗</span>
-          )}
-          <input
-            type="text"
-            value={qtyValue}
-            onChange={e => qtyOnChange(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') onCancel(); }}
-            placeholder={editLoss ? '如 60g' : '数量'}
-            className={`w-16 bg-transparent focus:outline-none text-sm ${
-              editLoss ? 'text-red-600 placeholder:text-red-300' : ''
-            }`}
-          />
-        </div>
-        <button
-          onClick={handleSave}
-          title={editLoss ? '确认损耗' : '保存'}
-          className={`w-7 h-7 rounded-lg text-white flex items-center justify-center shrink-0 ${
-            editLoss ? 'bg-red-500 hover:bg-red-600' : 'bg-grape-600 hover:bg-grape-700'
-          }`}
-        >
-          <Check size={14} />
-        </button>
-        <button
-          onClick={onCancel}
-          className="w-7 h-7 rounded-lg text-sage-400 hover:bg-sage-100 flex items-center justify-center shrink-0"
-        >
-          <X size={14} />
-        </button>
-      </div>
-      <label className="flex items-center gap-1.5 text-xs text-sage-500 select-none cursor-pointer">
-        <input
-          type="checkbox"
-          checked={editLoss}
-          onChange={e => onLossToggle(e.target.checked)}
-          className="accent-red-500"
-        />
-        标记为损耗（坏的 / 过期的）
-      </label>
-      {editLoss && (
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={editLossReason}
-              onChange={e => onLossReason(e.target.value as LossReason)}
-              className="px-2 py-1 rounded-lg bg-white border border-sage-200 text-xs text-sage-600 focus:outline-none focus:border-grape-400"
-            >
-              {(['spoiled', 'expired', 'overcooked', 'other'] as LossReason[]).map(r => (
-                <option key={r} value={r}>{LOSS_REASON_LABELS[r]}</option>
-              ))}
-            </select>
-            <span className={`text-sm font-medium ${lossExceeds ? 'text-red-600' : 'text-sage-600'}`}>
-              损耗 <span className="font-bold text-red-600">{lossText || '0'}</span>
-              <span className="mx-1 text-sage-400">→</span>
-              剩余 <span className={`font-bold ${lossExceeds ? 'text-red-600' : 'text-grape-600'}`}>{remaining}</span>
-            </span>
-          </div>
-          {lossExceeds && (
-            <div className="flex items-center gap-1.5 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
-              <AlertTriangle size={12} className="shrink-0" />
-              损耗量≥库存，食材将归零。确认无误再保存，或点顶部「撤销」回退。
-            </div>
-          )}
-          {lossMismatch && (
-            <div className="flex items-center gap-1.5 text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
-              <AlertTriangle size={12} className="shrink-0" />
-              损耗单位与库存不一致（如库存写 500g、损耗写 2个），无法计算，请带相同单位。
-            </div>
-          )}
-          {shouldConfirmLoss && !lossExceeds && (
-            <div className="flex items-center gap-1.5 text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
-              <AlertTriangle size={12} className="shrink-0" />
-              损耗量较大，保存时会再次确认。
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ===== 损耗记录展示 =====
-
-function formatRelativeDate(iso: string): string {
-  const d = new Date(iso);
-  const diff = Date.now() - d.getTime();
-  const day = 86400000;
-  if (diff < 0) return '刚刚';
-  if (diff < day) return '今天';
-  if (diff < 2 * day) return '昨天';
-  if (diff < 7 * day) return `${Math.floor(diff / day)}天前`;
-  return d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
-}
-
-function LossList({ losses, onDelete }: { losses: PantryLoss[]; onDelete?: (lossId: string) => void }) {
-  return (
-    <div className="ml-8 mt-1.5 space-y-1">
-      {losses.map(l => (
-        <div key={l.id} className="flex items-center gap-1.5 text-xs text-red-500/90">
-          <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
-          <span>损耗 −{l.quantity}</span>
-          <span className="text-sage-300">·</span>
-          <span>{LOSS_REASON_LABELS[l.reason]}</span>
-          <span className="text-sage-300">·</span>
-          <span className="text-sage-400">{formatRelativeDate(l.createdAt)}</span>
-          {onDelete && (
-            <button
-              onClick={() => onDelete(l.id)}
-              title="删除这条损耗记录（库存会加回）"
-              className="ml-0.5 text-sage-300 hover:text-red-500 transition-colors shrink-0"
-            >
-              <X size={12} />
-            </button>
-          )}
         </div>
       ))}
     </div>
