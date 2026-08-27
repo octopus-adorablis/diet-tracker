@@ -86,11 +86,12 @@ export function allocateCompletedUsage(
     const pools = poolsByName.get(canonicalName(ri.name));
     if (!pools || pools.length === 0) continue;
 
-    // 只有菜谱完成前就存在的批次才承担扣减（之后买的属于新批次，不被历史菜谱误扣）
-    // completedAt 缺失的旧菜谱：退化为所有批次均可扣（与旧行为兼容）
-    const eligible = completedAt
-      ? pools.filter(p => !p.created || p.created <= completedAt)
-      : pools;
+    // 所有同名批次（无论何时购买）都参与 FIFO 分摊，按购买时间从早到晚扣减。
+    // 说明：早期版本曾按"菜谱完成时间"过滤掉"完成后才买的批次"，
+    // 但其副作用是——当老批次单独无法覆盖菜谱用量时（如老柠檬1个+新柠檬1个、菜谱需2个），
+    // 新批次被排除在外，老批次被误标"不够了"，且新批次库存与菜谱对不上。
+    // 正确语义：用户的总库存（跨批次）够用就不该报"不够了"，扣减按 FIFO 分摊到各批次即可。
+    const eligible = pools;
     if (eligible.length === 0) continue;
 
     let leftNum = needNum;
