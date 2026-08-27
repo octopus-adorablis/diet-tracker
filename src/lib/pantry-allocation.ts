@@ -283,9 +283,10 @@ export interface ActiveNeededUsage {
 export function computeLossFromEdit(
   oldQty: string,
   newQty: string,
-  reason: LossReason,
+  reason: LossReason | undefined,
   id: string,
 ): PantryLoss | null {
+  if (!reason) return null; // 无原因 = 非损耗（普通修正数量），不记损耗
   const oldParsed = parseQuantity(oldQty);
   const newParsed = parseQuantity(newQty);
   if (!oldParsed || !newParsed || !unitsMatch(oldParsed.unit, newParsed.unit)) return null;

@@ -117,3 +117,19 @@ export function parseQuantity(q: string): {
 
   return null;
 }
+
+// 两个数量字符串相减，返回剩余的字符串（不含"剩"前缀）。
+// 用于「报损」场景下由损耗量反推剩余量：base 是当前剩余，sub 是本次损耗。
+// - 损耗量缺单位时，默认借用基准单位（基准 "500g"、损耗 "100" → 视为 100g）
+// - 单位不匹配或解析失败返回 null（调用方据此视为「无损耗 / 不折算」）
+// - 结果为负时归零（损耗不可能超过库存）
+export function quantitySubtract(baseQty: string, subQty: string): string | null {
+  const a = parseQuantity(baseQty);
+  const b = parseQuantity(subQty);
+  if (!a || !b) return null;
+  const bUnit = b.unit || a.unit; // 损耗量缺单位时借用基准单位
+  if (!unitsMatch(a.unit, bUnit)) return null;
+  const d = subtractFraction(a.numerator, a.denominator, b.numerator, b.denominator);
+  if (d.num < 0) return '0' + a.unit;
+  return formatQuantity(d.num, d.den, a.isFraction || a.isHalf) + a.unit;
+}

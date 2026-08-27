@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { Plus, Circle, CheckCircle, X, Check, ChefHat, ShoppingCart, ExternalLink, LayoutGrid, List, Beef, Carrot, Wheat, Package } from 'lucide-react';
 import {
   DndContext, closestCenter, pointerWithin, PointerSensor, useSensor, useSensors, useDroppable, DragOverlay,
@@ -10,6 +10,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import type { PantryItem, PantryDisplayInfo, PantryUsageInfo, PantryStatus, PantryCategory, LossReason, PantryLoss } from '../types';
 import { LOSS_REASON_LABELS } from '../types';
+import { quantitySubtract, parseQuantity } from '../lib/quantity';
 import SwipeToDelete from './SwipeToDelete';
 
 // 四象限配置
@@ -725,6 +726,7 @@ function SortablePantryItemCard({
               editQty={editQty}
               editLoss={editLoss}
               editLossReason={editLossReason}
+              baseQty={item.quantity}
               onName={setEditName}
               onQty={setEditQty}
               onLossToggle={setEditLoss}
@@ -820,6 +822,7 @@ function PantryItemCard({
               editQty={editQty}
               editLoss={editLoss}
               editLossReason={editLossReason}
+              baseQty={item.quantity}
               onName={setEditName}
               onQty={setEditQty}
               onLossToggle={setEditLoss}
@@ -1010,16 +1013,20 @@ function UsageList({ usages, onNavigateToRecipe }: {
   );
 }
 
-// ===== 可复用的行内编辑区（名称 + 数量 + 保存/取消 + 损耗标记） =====
+// ===== 可复用的行内编辑区（名称 + 数量/损耗量 + 保存/取消 + 损耗标记） =====
+// 损耗语义翻转：勾选「标记为损耗」后，数量框的语义由「剩余量」变为「损耗量」。
+// 用户直接填坏了多少（如 100g），组件自动折算成剩余量存进 editQty（= baseQty − 损耗量），
+// 保存时仍按剩余量提交，hook 端据此计算损耗记录。这样用户无需心算减法。
 
 function PantryEditRow({
-  editName, editQty, editLoss, editLossReason,
+  editName, editQty, editLoss, editLossReason, baseQty,
   onName, onQty, onLossToggle, onLossReason, onSave, onCancel,
 }: {
   editName: string;
   editQty: string;
   editLoss: boolean;
   editLossReason: LossReason;
+  baseQty: string;
   onName: (v: string) => void;
   onQty: (v: string) => void;
   onLossToggle: (v: boolean) => void;
@@ -1027,6 +1034,31 @@ function PantryEditRow({
   onSave: () => void;
   onCancel: () => void;
 }) {
+  // 损耗模式下，输入框独立维护「损耗量」文本，避免逐字输入时显示抖动
+  const [lossText, setLossText] = useState(
+    editLoss ? (quantitySubtract(baseQty, editQty) ?? '') : ''
+  );
+
+  // 进入损耗模式时，用当前剩余量反推损耗量作为初始显示
+  useEffect(() => {
+    if (editLoss) {
+      setLossText(quantitySubtract(baseQty, editQty) ?? '0' + (parseQuantity(baseQty)?.unit ?? ''));
+    }
+  }, [editLoss]); // 仅在勾选状态变化时同步，不随 editQty 每键重置
+
+  const handleLossText = (v: string) => {
+    setLossText(v);
+    // 把损耗量折算成剩余量回写 editQty（单位不匹配/解析失败则视为不损耗，剩 base）
+    const remaining = quantitySubtract(baseQty, v);
+    onQty(remaining ?? baseQty);
+  };
+
+  // 损耗模式下的展示值：损耗量文本 + 「剩余将变为 X」提示
+  const qtyValue = editLoss ? lossText : editQty;
+  const qtyOnChange = editLoss ? handleLossText : onQty;
+  const qtyPlaceholder = editLoss ? '损耗量，如 100g' : '数量';
+  const remainPreview = editLoss ? (quantitySubtract(baseQty, lossText || '0') ?? baseQty) : null;
+
   return (
     <div className="flex-1 min-w-0 space-y-1.5" onPointerDown={e => e.stopPropagation()}>
       <div className="flex items-center gap-2">
@@ -1040,10 +1072,13 @@ function PantryEditRow({
         />
         <input
           type="text"
-          value={editQty}
-          onChange={e => onQty(e.target.value)}
+          value={qtyValue}
+          onChange={e => qtyOnChange(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') onSave(); if (e.key === 'Escape') onCancel(); }}
-          className="w-20 px-2 py-1 rounded-lg bg-white border border-grape-400 text-sm focus:outline-none focus:border-grape-500"
+          placeholder={qtyPlaceholder}
+          className={`w-20 px-2 py-1 rounded-lg bg-white border text-sm focus:outline-none ${
+            editLoss ? 'border-red-300 focus:border-red-400 text-red-600' : 'border-grape-400 focus:border-grape-500'
+          }`}
         />
         <button
           onClick={onSave}
@@ -1068,15 +1103,22 @@ function PantryEditRow({
         标记为损耗（坏的 / 过期的）
       </label>
       {editLoss && (
-        <select
-          value={editLossReason}
-          onChange={e => onLossReason(e.target.value as LossReason)}
-          className="px-2 py-1 rounded-lg bg-white border border-sage-200 text-xs text-sage-600 focus:outline-none focus:border-grape-400"
-        >
-          {(['spoiled', 'expired', 'overcooked', 'other'] as LossReason[]).map(r => (
-            <option key={r} value={r}>{LOSS_REASON_LABELS[r]}</option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <select
+            value={editLossReason}
+            onChange={e => onLossReason(e.target.value as LossReason)}
+            className="px-2 py-1 rounded-lg bg-white border border-sage-200 text-xs text-sage-600 focus:outline-none focus:border-grape-400"
+          >
+            {(['spoiled', 'expired', 'overcooked', 'other'] as LossReason[]).map(r => (
+              <option key={r} value={r}>{LOSS_REASON_LABELS[r]}</option>
+            ))}
+          </select>
+          {remainPreview && (
+            <span className="text-[11px] text-sage-400">
+              损耗 {lossText || '0'} → 剩余 {remainPreview}
+            </span>
+          )}
+        </div>
       )}
     </div>
   );
