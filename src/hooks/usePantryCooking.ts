@@ -806,13 +806,6 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     const map = new Map<string, PantryDisplayInfo>();
     const { deductions: allocDeductions, allocatedRecipeItemIds, insufficientIds } = completedAllocations;
 
-    // 预计算：哪些食材名称有"已用完"记录
-    // 用于展示层过滤：新批次不显示历史菜谱的"已用"标注
-    const usedUpNames = new Set<string>();
-    for (const p of allPantryItems) {
-      if (p.status === 'checked') usedUpNames.add(canonicalName(p.name));
-    }
-
     // 预计算：哪些活跃菜谱食材已被真实活跃食材"覆盖"（虚拟扣减后够用）
     // 用于虚拟待买项（virtual-shortfall-*）只显示未被覆盖的菜谱
     // 场景：食材120g，菜谱A需120g + 菜谱B需120g → 菜谱A被覆盖，待买项只显示菜谱B
@@ -882,10 +875,9 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
         if (!recipe) continue;
 
         const isCompleted = recipe.active === false;
-        // 时间判断：只在"新批次"食材上生效（同名有"已用完"记录）
-        // 仅用于展示层过滤"已用"标注（扣减本身已由 FIFO 分摊按时间先后处理）
-        const isNewBatch = usedUpNames.has(canonicalName(item.name));
-        const timeSkip = isCompleted && isNewBatch && recipe.completedAt && item.createdAt &&
+        // 时间判断：当前食材买入时间晚于菜谱完成时间 → 这道菜做完时该批次还不存在
+        // 不应显示"已用"标注（扣减本身已由 FIFO 分摊按时间先后处理，这里只控制展示）
+        const timeSkip = isCompleted && recipe.completedAt && item.createdAt &&
             new Date(item.createdAt) > new Date(recipe.completedAt);
         if (timeSkip) continue;
 
