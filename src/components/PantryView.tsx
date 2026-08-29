@@ -139,8 +139,8 @@ export default function PantryView({
     onReorder(activeItems, oldIndex, newIndex);
   };
 
-  // 四象限模式拖拽：跨象限=改分类，同象限=排序；批量选择时整批改分类
-  const handleQuadrantDragEnd = (event: DragEndEvent) => {
+  // 四象限模式拖拽：跨象限=改分类并按落点插入，同象限=排序；批量选择时整批改分类
+  const handleQuadrantDragEnd = async (event: DragEndEvent) => {
     setActiveId(null);
     dragGuardRef.current = true;
     setTimeout(() => { dragGuardRef.current = false; }, 80);
@@ -198,8 +198,24 @@ export default function PantryView({
       return;
     }
 
-    // 单个：拖到象限空白区或跨象限食材 → 改分类
+    // 单个：跨象限拖动
     if (activeCat !== targetCategory) {
+      // 落到一个具体食材上 → 插入到该食材之前（一步到位，无需二次排序）
+      if (!overId.startsWith('quad-')) {
+        const catItems = itemsByCategory[targetCategory];
+        const overIdx = catItems.findIndex(i => i.id === over.id);
+        if (overIdx !== -1) {
+          const newOrder = [
+            ...catItems.slice(0, overIdx),
+            activeItem,
+            ...catItems.slice(overIdx),
+          ];
+          await onSetCategory(activeIdStr, targetCategory);
+          await onReorderBatch(newOrder);
+          return;
+        }
+      }
+      // 落到象限空白区 → 放末尾
       onSetCategory(activeIdStr, targetCategory);
       return;
     }
