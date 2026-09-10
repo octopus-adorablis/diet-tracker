@@ -48,11 +48,13 @@ export function allocateCompletedUsage(
   if (completed.length === 0) return { deductions, allocatedRecipeItemIds, insufficientIds };
   completed.sort((a, b) => a.completedAt.localeCompare(b.completedAt));
 
-  // 参与分摊的批次：仅"现有(active)"真实食材，虚拟待买项与"已用完(checked)"批次不参与
-  // 修复 bug：旧逻辑把 checked（已用完）批次也纳入 FIFO 扣减池，且因其购买时间最早会优先被扣。
-  // 但 checked 批次在食材库展示层被隐藏、语义上已被用户确认消耗完，扣减落在它身上会让
-  // 用户实际看到的"现有"批次数量不变 → 表现为"完成菜谱后食材库没同步"。
-  // 正确语义：只有 active 批次有真实剩余库存，应承担扣减。
+  // 参与分摊的批次：真实食材(active 与 checked 都纳入) + 虚拟待买项(to_buy)与虚拟项不参与。
+  // 关键修复（2026-09）：checked（已勾选"用完"）批次必须留在扣减池承担历史扣减。
+  // 否则用户勾选旧批次使其退出池后，已完成的菜谱用量会失去承担者，被重算并转嫁到剩余
+  // 的 active 批次上 → 表现为"勾选用完后，新买的食材被多扣"（真实数据错误）。
+  // 按下述 eligible 时间过滤后，checked 批次只在"菜谱完成前它就存在"时才承担，符合 FIFO
+  // （更早的批次先被历史菜谱消耗）。展示层 pantryDisplayMap 会跳过 checked 批次，所以它
+  // 承担扣减但不显示在食材库里，不影响用户看到的"现有"数量。
   // 每个批次的可扣池 = 原始数量，跨多次分摊共享（先到先得）
   interface Pool {
     item: PantryItem;
@@ -64,7 +66,7 @@ export function allocateCompletedUsage(
   const poolsByName = new Map<string, Pool[]>();
   for (const item of realItems) {
     if (item.isVirtual || item.id.startsWith('virtual-')) continue;
-    if (item.status !== 'active') continue;
+    if (item.status === 'to_buy') continue; // active 与 checked 都纳入：checked 仍需承担历史扣减
     const parsed = parseQuantity(item.originalQuantity || item.quantity);
     if (!parsed) continue;
     const cName = canonicalName(item.name);
