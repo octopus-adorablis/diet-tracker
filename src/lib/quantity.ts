@@ -59,6 +59,17 @@ export function unitsMatch(a: string, b: string): boolean {
   return GRAM_UNITS.has(a) && GRAM_UNITS.has(b);
 }
 
+// 全角/半角归一化：用户在中文输入法下可能敲出全角数字、全角小数点、全角 g，
+// 以及首尾全角空格（trim() 不去全角空格），这些都会导致正则解析失败 → 数量变 null → 不扣减。
+// 统一转半角后再交给后续解析，纯增益，不破坏现有半角逻辑。
+function normalizeWidth(s: string): string {
+  let t = (s ?? '').replace(/^[　 \t\r\n]+|[　 \t\r\n]+$/g, ''); // 去首尾空白（含全角空格 U+3000）
+  t = t.replace(/[０-９]/g, ch => String(ch.charCodeAt(0) - 0xff10)); // 全角数字 → 半角
+  t = t.replace(/．/g, '.'); // 全角小数点 → 半角
+  t = t.replace(/[ｇＧ]/g, 'g'); // 全角 g → 半角
+  return t;
+}
+
 const CHINESE_NUMBERS: Record<string, number> = {
   '半': 0.5, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5,
   '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
@@ -75,7 +86,7 @@ export function parseQuantity(q: string): {
   numerator: number; denominator: number; unit: string;
   isFraction: boolean; isHalf: boolean; number: number;
 } | null {
-  let s = q.trim();
+  let s = normalizeWidth(q ?? '');
   if (!s) return null;
 
   // 去掉"剩"前缀（减法后的剩余量）
