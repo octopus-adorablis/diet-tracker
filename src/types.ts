@@ -82,6 +82,7 @@ export interface PantryItem {
   isVirtual?: boolean;
   usedQuantity?: string;      // 旧字段，已废弃，保留向后兼容
   originalQuantity?: string; // 原始数量备份（迁移用，= quantity）
+  checkedAt?: string;        // 被勾选"用完"的时间戳；用于 FIFO 区分"勾选前/勾选后"完成的菜谱
 }
 
 // 单条消耗记录

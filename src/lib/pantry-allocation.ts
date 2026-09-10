@@ -62,6 +62,8 @@ export function allocateCompletedUsage(
     den: number;
     unit: string;
     created: string;
+    status: PantryStatus;
+    checkedAt?: string;
   }
   const poolsByName = new Map<string, Pool[]>();
   for (const item of realItems) {
@@ -77,6 +79,8 @@ export function allocateCompletedUsage(
       den: parsed.denominator,
       unit: parsed.unit,
       created: item.createdAt || '',
+      status: item.status,
+      checkedAt: item.checkedAt,
     });
   }
   // 同名批次按购买时间从早到晚（FIFO）；缺失时间信息的旧数据视为最早
@@ -90,9 +94,14 @@ export function allocateCompletedUsage(
 
     // 只有菜谱完成前就存在的批次才承担扣减（之后买的属于新批次，不被历史菜谱误扣）
     // completedAt 缺失的旧菜谱：退化为所有批次均可扣（与旧行为兼容）
-    const eligible = completedAt
-      ? pools.filter(p => !p.created || p.created <= completedAt)
-      : pools;
+    // 关键修复（2026-09）：已勾选"用完"(checked) 的批次，仅当菜谱在"勾选时间之前"就已完成时
+    // 才承担扣减——保留其历史扣减（不迁移到现有批次，修复香菜类问题）；勾选之后才完成的菜谱，
+    // 该批次已"消失"，不再参与，用量自然落到当前在用的 active 批次（修复羽衣甘蓝/芝麻菜类问题）。
+    const eligible = pools.filter(p => {
+      if (completedAt && p.created && p.created > completedAt) return false; // 菜谱完成之后才录入 → 新批次
+      if (p.status === 'checked' && p.checkedAt && completedAt && completedAt >= p.checkedAt) return false; // 勾选之后(含勾选时刻)才完成 → 已消失
+      return true;
+    });
     if (eligible.length === 0) continue;
 
     let leftNum = needNum;

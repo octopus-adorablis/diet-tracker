@@ -385,7 +385,12 @@ export function usePantryCooking(userId: string | undefined, isDemo: boolean) {
     const item = pantryItems.find(p => p.id === id);
     if (!item) return;
     const newStatus = item.status === 'checked' ? 'active' : 'checked';
-    await editPantryItem(id, { status: newStatus });
+    // 勾选"用完"时记录时间戳：用于 FIFO 区分"勾选前/勾选后"完成的菜谱。
+    // 勾选后，该批次不再为之后完成的菜谱承担扣减（已"消失"）；但之前已完成的菜谱
+    // 扣减仍由它承担，不会迁移到现有批次。
+    const updates: Partial<PantryItem> = { status: newStatus };
+    updates.checkedAt = newStatus === 'checked' ? new Date().toISOString() : undefined;
+    await editPantryItem(id, updates);
   }, [pantryItems, editPantryItem]);
 
   // 待买 → 现有（买好了，确认数量）

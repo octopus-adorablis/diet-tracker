@@ -139,6 +139,7 @@ export async function getPantryItems(userId: string): Promise<PantryItem[]> {
     sortOrder: row.sort_order ?? 0,
     usedQuantity: row.used_quantity || '',
     originalQuantity: row.original_quantity || '',
+    checkedAt: row.checked_at || undefined,
   }));
 }
 
@@ -154,12 +155,13 @@ export async function addPantryItem(item: Omit<PantryItem, 'id' | 'createdAt'>):
       status: item.status,
       category: item.category || 'other',
       sort_order: item.sortOrder ?? 0,
+      checked_at: item.checkedAt ?? null,
     })
     .select()
     .single();
 
-  // original_quantity 列可能还没添加，去掉后重试
-  if (error && error.message?.includes('original_quantity')) {
+  // original_quantity / checked_at 列可能还没添加，去掉后重试
+  if (error && (error.message?.includes('original_quantity') || error.message?.includes('checked_at'))) {
     const retry = await supabase
       .from('pantry_items')
       .insert({
@@ -204,16 +206,18 @@ export async function updatePantryItem(id: string, updates: Partial<PantryItem>)
   if (updates.sortOrder !== undefined) dbUpdates.sort_order = updates.sortOrder;
   if (updates.category !== undefined) dbUpdates.category = updates.category;
   if (updates.usedQuantity !== undefined) dbUpdates.used_quantity = updates.usedQuantity;
+  if (updates.checkedAt !== undefined) dbUpdates.checked_at = updates.checkedAt ?? null;
 
   let { error } = await supabase
     .from('pantry_items')
     .update(dbUpdates)
     .eq('id', id);
 
-  // original_quantity 列可能还没添加，去掉后重试
-  if (error && error.message?.includes('original_quantity')) {
+  // original_quantity / checked_at 列可能还没添加，去掉后重试
+  if (error && (error.message?.includes('original_quantity') || error.message?.includes('checked_at'))) {
     const safeUpdates = { ...dbUpdates };
     delete safeUpdates.original_quantity;
+    delete safeUpdates.checked_at;
     const retry = await supabase
       .from('pantry_items')
       .update(safeUpdates)
