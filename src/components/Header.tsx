@@ -1,4 +1,4 @@
-import { Leaf, LogOut, User, CalendarDays, List, BarChart3, Plus, ChefHat, ExternalLink } from 'lucide-react';
+import { Leaf, LogOut, User, CalendarDays, List, BarChart3, Plus, ChefHat, ExternalLink, Undo2 } from 'lucide-react';
 import type { ViewMode } from '../types';
 
 interface HeaderProps {
@@ -8,9 +8,11 @@ interface HeaderProps {
   onChangeView: (view: ViewMode) => void;
   onAddClick: () => void;
   onOpenInNewTab: () => void;
+  undoInfo: string | null;
+  onUndo: () => void;
 }
 
-export default function Header({ userEmail, onSignOut, currentView, onChangeView, onAddClick, onOpenInNewTab }: HeaderProps) {
+export default function Header({ userEmail, onSignOut, currentView, onChangeView, onAddClick, onOpenInNewTab, undoInfo, onUndo }: HeaderProps) {
   const tabs: { id: ViewMode; label: string; icon: typeof CalendarDays }[] = [
     { id: 'calendar', label: '日历', icon: CalendarDays },
     { id: 'list', label: '列表', icon: List },
@@ -61,6 +63,21 @@ export default function Header({ userEmail, onSignOut, currentView, onChangeView
 
           {/* Actions */}
           <div className="flex items-center gap-2">
+            {/* 常驻撤销按钮：有可撤销操作时高亮可点，否则灰掉 */}
+            <button
+              onClick={onUndo}
+              disabled={!undoInfo}
+              className={`h-9 px-3 rounded-xl flex items-center gap-1.5 text-sm font-medium transition-colors ${
+                undoInfo
+                  ? 'bg-grape-500 text-white hover:bg-grape-600 shadow-md shadow-grape-500/20'
+                  : 'bg-sage-100 text-sage-300 cursor-not-allowed'
+              }`}
+              title={undoInfo ? `撤销 · ${undoInfo}（⌘Z）` : '暂无可撤销的操作'}
+            >
+              <Undo2 size={16} />
+              <span className="hidden sm:inline">撤销</span>
+            </button>
+
             {showNewTabButton && (
               <button
                 onClick={onOpenInNewTab}
