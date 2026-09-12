@@ -7,7 +7,7 @@ import {
   SortableContext, useSortable, verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, X, ChefHat, ArrowLeft, Check, RotateCcw, ChevronDown, ChevronUp, Undo2 } from 'lucide-react';
+import { Plus, X, ChefHat, ArrowLeft, Check, RotateCcw, ChevronDown, ChevronUp, Undo2, Trash2 } from 'lucide-react';
 import type { Recipe, RecipeItemWithMatch } from '../types';
 import SwipeToDelete from './SwipeToDelete';
 
@@ -229,19 +229,18 @@ function SortableRecipeCard({
 
   return (
     <div ref={setNodeRef} style={style} {...attributes}>
-      <SwipeToDelete onDelete={() => onDelete(recipe.id)}>
-        <RecipeCard
-          recipe={recipe}
-          items={items}
-          dragListeners={listeners}
-          onEditTitle={onEditTitle}
-          onToggleActive={onToggleActive}
-          onRedoRecipe={onRedoRecipe}
-          onAddItem={onAddItem}
-          onEditItem={onEditItem}
-          onDeleteItem={onDeleteItem}
-        />
-      </SwipeToDelete>
+      <RecipeCard
+        recipe={recipe}
+        items={items}
+        dragListeners={listeners}
+        onEditTitle={onEditTitle}
+        onToggleActive={onToggleActive}
+        onRedoRecipe={onRedoRecipe}
+        onDelete={onDelete}
+        onAddItem={onAddItem}
+        onEditItem={onEditItem}
+        onDeleteItem={onDeleteItem}
+      />
     </div>
   );
 }
@@ -249,7 +248,7 @@ function SortableRecipeCard({
 // ===== 菜谱卡片内容 =====
 
 function RecipeCard({
-  recipe, items, dragListeners, onEditTitle, onToggleActive, onRedoRecipe, onAddItem, onEditItem, onDeleteItem,
+  recipe, items, dragListeners, onEditTitle, onToggleActive, onRedoRecipe, onDelete, onAddItem, onEditItem, onDeleteItem,
 }: {
   recipe: Recipe;
   items: RecipeItemWithMatch[];
@@ -257,6 +256,7 @@ function RecipeCard({
   onEditTitle: (id: string, title: string) => Promise<void>;
   onToggleActive: (id: string) => Promise<void>;
   onRedoRecipe: (id: string) => Promise<Recipe | null>;
+  onDelete: (id: string) => Promise<void>;
   onAddItem: (recipeId: string, name: string, quantity: string) => Promise<void>;
   onEditItem: (id: string, updates: { name?: string; quantity?: string }) => Promise<void>;
   onDeleteItem: (id: string) => Promise<void>;
@@ -368,6 +368,15 @@ function RecipeCard({
         >
           {isActive ? <Check size={15} /> : <RotateCcw size={15} />}
           <span className="hidden sm:inline">{isActive ? '完成' : '再做'}</span>
+        </button>
+        <button
+          onClick={() => onDelete(recipe.id)}
+          onPointerDown={e => e.stopPropagation()}
+          title="删除菜谱"
+          className="h-7 px-2 rounded-lg flex items-center gap-1 text-xs font-medium text-sage-400 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0"
+        >
+          <Trash2 size={15} />
+          <span className="hidden sm:inline">删除</span>
         </button>
       </div>
 
