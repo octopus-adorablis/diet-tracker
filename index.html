@@ -16,7 +16,20 @@
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif;color:#6b7a5e;text-align:center;padding:24px;">
+        正在加载饮食记录…<br/>若长时间空白，请下拉刷新或清除该网站缓存后重试。
+      </div>
+    </div>
+    <script>
+      // 若 8 秒后 React 仍未挂载（JS 未执行/加载失败），提示用户而非纯白屏
+      setTimeout(function () {
+        var root = document.getElementById('root');
+        if (root && root.childElementCount === 1 && root.firstElementChild && root.firstElementChild.tagName === 'DIV' && /正在加载/.test(root.firstElementChild.textContent || '')) {
+          root.firstElementChild.innerHTML = '页面加载失败 😢<br/>请尝试：<br/>1. 下拉刷新<br/>2. 清除该网站缓存后重开<br/>3. 用浏览器无痕/隐私模式打开';
+        }
+      }, 8000);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

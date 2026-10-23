@@ -43,6 +43,11 @@ export function useAuth(): AuthState {
     getCurrentUser().then(u => {
       setUser(u);
       setLoading(false);
+    }).catch(err => {
+      // Supabase 连接失败（如项目被暂停/网络异常）：不要卡在加载态，回到登录页
+      console.error('[useAuth] getCurrentUser failed:', err);
+      setUser(null);
+      setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
