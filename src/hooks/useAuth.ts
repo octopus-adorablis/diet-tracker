@@ -18,6 +18,7 @@ export interface AuthState {
   signIn: (email: string, password: string) => Promise<{ error?: Error | null }>;
   signOut: () => Promise<{ error?: Error | null }>;
   setDemoMode: () => void;
+  resetPassword: (email: string) => Promise<{ error?: Error | null }>;
 }
 
 export function useAuth(): AuthState {
@@ -92,5 +93,14 @@ export function useAuth(): AuthState {
     setIsDemo(true);
   }, []);
 
-  return { user, loading, isDemo, signUp, signIn, signOut, setDemoMode };
+  const resetPassword = useCallback(async (email: string) => {
+    if (!isSupabaseConfigured()) {
+      return { error: new Error('请先配置 Supabase，或点击"体验 Demo"直接进入') };
+    }
+    const redirectTo = window.location.origin + '/#update-password';
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    return { error };
+  }, []);
+
+  return { user, loading, isDemo, signUp, signIn, signOut, setDemoMode, resetPassword };
 }

@@ -5,16 +5,31 @@ interface AuthFormProps {
   onSignIn: (email: string, password: string) => Promise<{ error?: Error | null }>;
   onSignUp: (email: string, password: string) => Promise<{ error?: Error | null }>;
   onDemo: () => void;
+  onForgotPassword: (email: string) => Promise<{ error?: Error | null }>;
 }
 
-export default function AuthForm({ onSignIn, onSignUp, onDemo }: AuthFormProps) {
+export default function AuthForm({ onSignIn, onSignUp, onDemo, onForgotPassword }: AuthFormProps) {
   const [isSignUp, setIsSignUp] = useState(false);
+  const [mode, setMode] = useState<'auth' | 'forgot'>('auth');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  // 忘记密码视图状态
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotMsg, setForgotMsg] = useState('');
+  const [forgotErr, setForgotErr] = useState('');
+
+  const resetAuthState = () => {
+    setError('');
+    setSuccess('');
+    setPassword('');
+    setConfirmPassword('');
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,6 +71,33 @@ export default function AuthForm({ onSignIn, onSignUp, onDemo }: AuthFormProps) 
     }
   };
 
+  const handleForgot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotErr('');
+    setForgotMsg('');
+    if (!forgotEmail) {
+      setForgotErr('请输入邮箱');
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      const { error } = await onForgotPassword(forgotEmail);
+      if (error) throw error;
+      setForgotMsg('已发送重置邮件，请前往邮箱查收并设置新密码');
+    } catch (err: any) {
+      setForgotErr(err.message || '发送失败，请重试');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const backToLogin = () => {
+    setMode('auth');
+    setForgotEmail('');
+    setForgotErr('');
+    setForgotMsg('');
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md animate-slide-up">
@@ -71,93 +113,156 @@ export default function AuthForm({ onSignIn, onSignUp, onDemo }: AuthFormProps) 
         {/* Form Card */}
         <div className="bg-white rounded-3xl shadow-xl shadow-sage-900/5 p-8 border border-sage-100">
           <h2 className="text-xl font-semibold text-sage-800 mb-6 text-center">
-            {isSignUp ? '创建账号' : '欢迎回来'}
+            {mode === 'forgot' ? '重置密码' : isSignUp ? '创建账号' : '欢迎回来'}
           </h2>
 
-          {error && (
-            <div className="mb-4 p-3 rounded-xl bg-rose-50 text-rose-700 text-sm border border-rose-200">
-              {error}
-            </div>
-          )}
-
-          {success && (
-            <div className="mb-4 p-3 rounded-xl bg-emerald-50 text-emerald-700 text-sm border border-emerald-200">
-              {success}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-sage-700 mb-1.5">邮箱</label>
-              <div className="relative">
-                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sage-400" size={18} />
-                <input
-                  type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  placeholder="your@email.com"
-                  className="w-full pl-11 pr-4 py-3 rounded-xl border border-sage-200 bg-cream-50 text-sage-800 placeholder-sage-400 focus:outline-none focus:ring-2 focus:ring-sage-400 focus:border-transparent transition-all"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-sage-700 mb-1.5">密码</label>
-              <div className="relative">
-                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sage-400" size={18} />
-                <input
-                  type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="至少6位密码"
-                  className="w-full pl-11 pr-4 py-3 rounded-xl border border-sage-200 bg-cream-50 text-sage-800 placeholder-sage-400 focus:outline-none focus:ring-2 focus:ring-sage-400 focus:border-transparent transition-all"
-                />
-              </div>
-            </div>
-
-            {isSignUp && (
-              <div>
-                <label className="block text-sm font-medium text-sage-700 mb-1.5">确认密码</label>
-                <div className="relative">
-                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sage-400" size={18} />
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={e => setConfirmPassword(e.target.value)}
-                    placeholder="再次输入密码"
-                    className="w-full pl-11 pr-4 py-3 rounded-xl border border-sage-200 bg-cream-50 text-sage-800 placeholder-sage-400 focus"
-                  />
+          {mode === 'forgot' ? (
+            <div className="space-y-4">
+              {forgotMsg ? (
+                <div className="p-3 rounded-xl bg-emerald-50 text-emerald-700 text-sm border border-emerald-200">
+                  {forgotMsg}
                 </div>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 rounded-xl bg-sage-600 text-white font-medium hover:bg-sage-700 active:bg-sage-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {loading ? (
-                <Loader2 size={20} className="animate-spin" />
-              ) : isSignUp ? (
-                <><UserPlus size={20} /> 注册</>
               ) : (
-                <><LogIn size={20} /> 登录</>
+                <form onSubmit={handleForgot} className="space-y-4">
+                  {forgotErr && (
+                    <div className="p-3 rounded-xl bg-rose-50 text-rose-700 text-sm border border-rose-200">
+                      {forgotErr}
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-sm font-medium text-sage-700 mb-1.5">邮箱</label>
+                    <div className="relative">
+                      <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sage-400" size={18} />
+                      <input
+                        type="email"
+                        value={forgotEmail}
+                        onChange={e => setForgotEmail(e.target.value)}
+                        placeholder="your@email.com"
+                        className="w-full pl-11 pr-4 py-3 rounded-xl border border-sage-200 bg-cream-50 text-sage-800 placeholder-sage-400 focus:outline-none focus:ring-2 focus:ring-sage-400 focus:border-transparent transition-all"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={forgotLoading}
+                    className="w-full py-3 rounded-xl bg-sage-600 text-white font-medium hover:bg-sage-700 active:bg-sage-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {forgotLoading ? <Loader2 size={20} className="animate-spin" /> : '发送重置邮件'}
+                  </button>
+                </form>
               )}
-            </button>
-          </form>
+              <div className="text-center">
+                <button
+                  type="button"
+                  onClick={backToLogin}
+                  className="text-sage-600 hover:text-sage-800 text-sm font-medium transition-colors"
+                >
+                  返回登录
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {error && (
+                <div className="mb-4 p-3 rounded-xl bg-rose-50 text-rose-700 text-sm border border-rose-200">
+                  {error}
+                </div>
+              )}
 
-          <div className="mt-6 text-center">
-            <button
-              onClick={() => {
-                setIsSignUp(!isSignUp);
-                setError('');
-                setSuccess('');
-              }}
-              className="text-sage-600 hover:text-sage-800 text-sm font-medium transition-colors"
-            >
-              {isSignUp ? '已有账号？直接登录' : '还没有账号？立即注册'}
-            </button>
-          </div>
+              {success && (
+                <div className="mb-4 p-3 rounded-xl bg-emerald-50 text-emerald-700 text-sm border border-emerald-200">
+                  {success}
+                </div>
+              )}
+
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-sage-700 mb-1.5">邮箱</label>
+                  <div className="relative">
+                    <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sage-400" size={18} />
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                      placeholder="your@email.com"
+                      className="w-full pl-11 pr-4 py-3 rounded-xl border border-sage-200 bg-cream-50 text-sage-800 placeholder-sage-400 focus:outline-none focus:ring-2 focus:ring-sage-400 focus:border-transparent transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-sage-700 mb-1.5">密码</label>
+                  <div className="relative">
+                    <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sage-400" size={18} />
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={e => setPassword(e.target.value)}
+                      placeholder="至少6位密码"
+                      className="w-full pl-11 pr-4 py-3 rounded-xl border border-sage-200 bg-cream-50 text-sage-800 placeholder-sage-400 focus:outline-none focus:ring-2 focus:ring-sage-400 focus:border-transparent transition-all"
+                    />
+                  </div>
+                </div>
+
+                {isSignUp && (
+                  <div>
+                    <label className="block text-sm font-medium text-sage-700 mb-1.5">确认密码</label>
+                    <div className="relative">
+                      <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sage-400" size={18} />
+                      <input
+                        type="password"
+                        value={confirmPassword}
+                        onChange={e => setConfirmPassword(e.target.value)}
+                        placeholder="再次输入密码"
+                        className="w-full pl-11 pr-4 py-3 rounded-xl border border-sage-200 bg-cream-50 text-sage-800 placeholder-sage-400 focus:outline-none focus:ring-2 focus:ring-sage-400 focus:border-transparent transition-all"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 rounded-xl bg-sage-600 text-white font-medium hover:bg-sage-700 active:bg-sage-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <Loader2 size={20} className="animate-spin" />
+                  ) : isSignUp ? (
+                    <><UserPlus size={20} /> 注册</>
+                  ) : (
+                    <><LogIn size={20} /> 登录</>
+                  )}
+                </button>
+              </form>
+
+              <div className="mt-6 text-center">
+                <button
+                  onClick={() => {
+                    setIsSignUp(!isSignUp);
+                    resetAuthState();
+                  }}
+                  className="text-sage-600 hover:text-sage-800 text-sm font-medium transition-colors"
+                >
+                  {isSignUp ? '已有账号？直接登录' : '还没有账号？立即注册'}
+                </button>
+                {!isSignUp && (
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode('forgot');
+                        setForgotErr('');
+                        setForgotMsg('');
+                      }}
+                      className="text-sage-500 hover:text-sage-700 text-sm transition-colors"
+                    >
+                      忘记密码？点此重置
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Demo Mode Button */}

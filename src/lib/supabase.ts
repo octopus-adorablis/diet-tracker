@@ -27,6 +27,15 @@ export async function signOut() {
   return { error };
 }
 
+// 发送密码重置邮件，回跳地址指向站点内的 #update-password（hash 路由，避免 Cloudflare Pages SPA 404）
+export async function resetPassword(email: string) {
+  const redirectTo = window.location.origin + '/#update-password';
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo,
+  });
+  return { error };
+}
+
 export async function getCurrentUser() {
   const { data: { user } } = await supabase.auth.getUser();
   return user;

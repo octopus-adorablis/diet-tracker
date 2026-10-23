@@ -4,6 +4,7 @@ import { useMeals } from './hooks/useMeals';
 import { usePantryCooking } from './hooks/usePantryCooking';
 import type { ViewMode, MealData } from './types';
 import AuthForm from './components/AuthForm';
+import UpdatePassword from './components/UpdatePassword';
 import Header from './components/Header';
 import CalendarView from './components/CalendarView';
 import ListView from './components/ListView';
@@ -26,7 +27,7 @@ function hashToView(hash: string): ViewMode | null {
 }
 
 function App() {
-  const { user, loading: authLoading, isDemo, signUp, signIn, signOut, setDemoMode } = useAuth();
+  const { user, loading: authLoading, isDemo, signUp, signIn, signOut, setDemoMode, resetPassword } = useAuth();
   const { meals, loading: mealsLoading, createMeal, removeMeal } = useMeals(user?.id, isDemo);
   const pantryCooking = usePantryCooking(user?.id, isDemo);
   const { undoInfo, undo } = pantryCooking;
@@ -96,8 +97,13 @@ function App() {
     );
   }
 
+  // 密码重置回跳：URL 含 #update-password 时，优先渲染设置新密码页
+  if (window.location.hash.startsWith('#update-password')) {
+    return <UpdatePassword onComplete={() => { window.location.hash = ''; }} />;
+  }
+
   if (!user) {
-    return <AuthForm onSignIn={signIn} onSignUp={signUp} onDemo={setDemoMode} />;
+    return <AuthForm onSignIn={signIn} onSignUp={signUp} onDemo={setDemoMode} onForgotPassword={resetPassword} />;
   }
 
   const isPantryView = currentView === 'pantry' || currentView === 'cooking';
