@@ -6,8 +6,8 @@ const DEMO_USER_KEY = 'diet_tracker_demo_user';
 const DEMO_USER_ID = 'demo-user-local';
 
 function isSupabaseConfigured(): boolean {
-  const url = import.meta.env.VITE_SUPABASE_URL || '';
-  return url !== '' && url !== 'https://placeholder.supabase.co';
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+  return key !== '' && key !== 'placeholder';
 }
 
 export interface AuthState {
@@ -41,15 +41,26 @@ export function useAuth(): AuthState {
       return;
     }
 
-    getCurrentUser().then(u => {
-      setUser(u);
-      setLoading(false);
-    }).catch(err => {
-      // Supabase 连接失败（如项目被暂停/网络异常）：不要卡在加载态，回到登录页
-      console.error('[useAuth] getCurrentUser failed:', err);
-      setUser(null);
-      setLoading(false);
-    });
+    // 超时兜底：若连不上 Supabase（被墙/项目暂停/网络异常），最多等 8 秒就进入登录页，
+    // 避免一直转圈卡死。Supabase 客户端的 promise 会在后台继续，登录页仍可重试。
+    const authPromise = getCurrentUser();
+    const timeoutPromise = new Promise<User | null>((resolve) =>
+      setTimeout(() => {
+        console.warn('[useAuth] getCurrentUser 超时（8s），直接进入登录页');
+        resolve(null);
+      }, 8000)
+    );
+    Promise.race([authPromise, timeoutPromise])
+      .then(u => {
+        setUser(u);
+        setLoading(false);
+      })
+      .catch(err => {
+        // Supabase 连接失败：不要卡在加载态，回到登录页
+        console.error('[useAuth] getCurrentUser failed:', err);
+        setUser(null);
+        setLoading(false);
+      });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       (window as any).__diag?.('onAuthStateChange: ' + _event)

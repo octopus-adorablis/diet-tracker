@@ -21,8 +21,8 @@ const DEMO_RECIPES_KEY = 'diet_tracker_demo_recipes';
 const DEMO_RECIPE_ITEMS_KEY = 'diet_tracker_demo_recipe_items';
 
 function isSupabaseConfigured(): boolean {
-  const url = import.meta.env.VITE_SUPABASE_URL || '';
-  return url !== '' && url !== 'https://placeholder.supabase.co';
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+  return key !== '' && key !== 'placeholder';
 }
 
 // ===== 食材自动分类 =====

@@ -1,8 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
 import type { MealData, PantryItem, PantryCategory, Recipe, RecipeItem } from '../types';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder';
+// 通过本站域名下的反代路径访问 Supabase，绕开国内/iOS 对 *.supabase.co 的 DNS/网络封锁。
+// 反代函数见 functions/sb/[[path]].ts（Cloudflare Pages Function）。
+const supabaseUrl = 'https://diet-tracker-9ex.pages.dev/sb';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_ys9A4LESFeJjE2Aiu4rTsw_UU07y8Lh';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
