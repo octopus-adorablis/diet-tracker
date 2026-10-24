@@ -4,7 +4,14 @@ import type { MealData, PantryItem, PantryCategory, Recipe, RecipeItem } from '.
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    // 关闭 URL 会话检测：避免 Supabase 在登录/加载时扫描并改写 window.location，
+    // 否则在 iOS Safari 上会与本站的 #pantry / #update-password hash 路由冲突并被浏览器拦截，报 "Load failed"。
+    // 本站密码重置走 verifyOtp({token_hash}) 手动处理，不依赖此机制，关闭无副作用。
+    detectSessionInUrl: false,
+  },
+});
 
 export async function signUp(email: string, password: string) {
   const { data, error } = await supabase.auth.signUp({
