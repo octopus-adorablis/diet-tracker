@@ -10,6 +10,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     // 否则在 iOS Safari 上会与本站的 #pantry / #update-password hash 路由冲突并被浏览器拦截，报 "Load failed"。
     // 本站密码重置走 verifyOtp({token_hash}) 手动处理，不依赖此机制，关闭无副作用。
     detectSessionInUrl: false,
+    // 密码登录走 implicit 流即可，避免 PKCE 在 iOS Safari 上的 token 交换/重定向逻辑引发整页导航。
+    flowType: 'implicit',
   },
 });
 

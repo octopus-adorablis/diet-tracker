@@ -31,8 +31,7 @@ export default function AuthForm({ onSignIn, onSignUp, onDemo, onForgotPassword 
     setConfirmPassword('');
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     setError('');
     setSuccess('');
 
@@ -71,8 +70,7 @@ export default function AuthForm({ onSignIn, onSignUp, onDemo, onForgotPassword 
     }
   };
 
-  const handleForgot = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleForgot = async () => {
     setForgotErr('');
     setForgotMsg('');
     if (!forgotEmail) {
@@ -123,7 +121,7 @@ export default function AuthForm({ onSignIn, onSignUp, onDemo, onForgotPassword 
                   {forgotMsg}
                 </div>
               ) : (
-                <form onSubmit={handleForgot} className="space-y-4">
+                <div className="space-y-4">
                   {forgotErr && (
                     <div className="p-3 rounded-xl bg-rose-50 text-rose-700 text-sm border border-rose-200">
                       {forgotErr}
@@ -143,13 +141,14 @@ export default function AuthForm({ onSignIn, onSignUp, onDemo, onForgotPassword 
                     </div>
                   </div>
                   <button
-                    type="submit"
+                    type="button"
+                    onClick={handleForgot}
                     disabled={forgotLoading}
                     className="w-full py-3 rounded-xl bg-sage-600 text-white font-medium hover:bg-sage-700 active:bg-sage-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     {forgotLoading ? <Loader2 size={20} className="animate-spin" /> : '发送重置邮件'}
                   </button>
-                </form>
+                </div>
               )}
               <div className="text-center">
                 <button
@@ -175,7 +174,7 @@ export default function AuthForm({ onSignIn, onSignUp, onDemo, onForgotPassword 
                 </div>
               )}
 
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-sage-700 mb-1.5">邮箱</label>
                   <div className="relative">
@@ -221,7 +220,8 @@ export default function AuthForm({ onSignIn, onSignUp, onDemo, onForgotPassword 
                 )}
 
                 <button
-                  type="submit"
+                  type="button"
+                  onClick={handleSubmit}
                   disabled={loading}
                   className="w-full py-3 rounded-xl bg-sage-600 text-white font-medium hover:bg-sage-700 active:bg-sage-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
@@ -232,8 +232,8 @@ export default function AuthForm({ onSignIn, onSignUp, onDemo, onForgotPassword 
                   ) : (
                     <><LogIn size={20} /> 登录</>
                   )}
-                </button>
-              </form>
+                  </button>
+              </div>
 
               <div className="mt-6 text-center">
                 <button

@@ -52,6 +52,7 @@ export function useAuth(): AuthState {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      (window as any).__diag?.('onAuthStateChange: ' + _event)
       setUser(session?.user ?? null);
       setLoading(false);
     });
@@ -68,10 +69,13 @@ export function useAuth(): AuthState {
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
+    (window as any).__diag?.('signIn called')
     if (!isSupabaseConfigured()) {
       return { error: new Error('请先配置 Supabase，或点击"体验 Demo"直接进入') };
     }
+    (window as any).__diag?.('signIn before supabase.auth.signInWithPassword')
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    (window as any).__diag?.('signIn returned; error=' + (error?.message || 'none'))
     return { data, error };
   }, []);
 
