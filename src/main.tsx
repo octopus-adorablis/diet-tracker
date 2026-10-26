@@ -18,10 +18,14 @@ function ensureOverlay(): HTMLElement {
   return el
 }
 function logDiag(msg: string) {
-  const el = ensureOverlay()
-  const t = new Date().toLocaleTimeString()
-  el.textContent = (el.textContent ? el.textContent + '\n' : '') + `[${t}] ${msg}`
   console.log('[diag]', msg)
+  // 仅当是真实错误（含 ❌）时才在页面上弹出深红 overlay，避免正常调试步骤打扰用户。
+  // 正常步骤（如 onAuthStateChange: SIGNED_OUT）只进控制台，页面保持干净。
+  if (msg.includes('❌')) {
+    const el = ensureOverlay()
+    const t = new Date().toLocaleTimeString()
+    el.textContent = (el.textContent ? el.textContent + '\n' : '') + `[${t}] ${msg}`
+  }
 }
 ;(window as any).__diag = logDiag
 ;(window as any).__showErr = (msg: string) => logDiag('❌ ' + msg)
